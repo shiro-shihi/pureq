@@ -9,10 +9,23 @@ export interface RetryOptions {
   readonly backoff?: boolean;
   readonly maxDelay?: number;
   readonly retryBudgetMs?: number;
+  /**
+   * Status codes that trigger a retry.
+   * Default: 5xx errors.
+   */
   readonly retryOnStatus?: readonly number[];
+  /**
+   * Whether to retry on network-level errors (DNS, connection reset, etc.)
+   */
   readonly retryOnNetworkError?: boolean;
+  /**
+   * HTTP methods allowed to be retried.
+   * Default: Idempotent methods ['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']
+   */
+  readonly methods?: readonly RequestConfig["method"][];
   readonly respectRetryAfter?: boolean;
   readonly retryAfterHeaderName?: string;
+  readonly jitter?: boolean;
   readonly onRetry?: (event: {
     readonly attempt: number;
     readonly waitTime: number;
@@ -85,6 +98,9 @@ async function sleep(ms: number, signal: AbortSignal | undefined): Promise<void>
 /**
  * pureq Retry Middleware
  * Implements exponential backoff strategy for network failures or configured status codes.
+ * 
+ * SAFETY: By default, only idempotent methods are retried. 
+ * To retry POST/PATCH, ensure the server supports idempotency and provide an idempotency key.
  */
 export function retry(options: RetryOptions): Middleware {
   if (!Number.isInteger(options.maxRetries) || options.maxRetries < 0) {
@@ -99,10 +115,15 @@ export function retry(options: RetryOptions): Middleware {
     retryBudgetMs,
     retryOnStatus,
     retryOnNetworkError = true,
+    methods = ["GET", "HEAD", "PUT", "DELETE", "OPTIONS"],
     respectRetryAfter = true,
     retryAfterHeaderName = "retry-after",
+    jitter,
     onRetry,
   } = options;
+
+  const retryableMethods = new Set(methods.map((method) => method.toUpperCase()));
+  const shouldJitter = jitter ?? backoff;
 
   const middleware: Middleware = async (req, next) => {
     let attempts = 0;
@@ -111,34 +132,43 @@ export function retry(options: RetryOptions): Middleware {
     const hasBudget = retryBudgetMs !== undefined && Number.isFinite(retryBudgetMs) && retryBudgetMs > 0;
 
     const withRetryMeta = () => {
-      const hasMeta = typeof req === "object" && req !== null && "_meta" in req;
-      const currentMeta = hasMeta
-        ? ((req as { _meta?: Record<string, unknown> })._meta ?? {})
-        : {};
-
+      const mutableReq = req as RequestConfig & { meta?: Record<string, unknown> };
+      const currentMeta = (mutableReq.meta ??= {});
       currentMeta.retryCount = attempts;
 
-      if (hasMeta) {
-        return req;
-      }
-
-      return {
-        ...req,
-        _meta: currentMeta,
-      };
+      return mutableReq;
     };
 
     const executeWithRetry = async (): Promise<HttpResponse> => {
+      const method = req.method.toUpperCase();
+      const isMethodSafe = retryableMethods.has(method);
+
       try {
         const res = await next(withRetryMeta());
 
         if (isRetryableStatus(res.status, retryOnStatus) && attempts < maxRetries) {
+          if (!isMethodSafe) {
+            appendPolicyTrace(req, {
+              policy: "retry",
+              decision: "skip",
+              at: Date.now(),
+              reason: `method ${req.method} is not idempotent and not in allowlist`,
+              status: res.status,
+            });
+            return res;
+          }
           attempts++;
           const baseWait = backoff ? Math.min(delay * 2 ** (attempts - 1), maxDelay) : delay;
           const retryAfterMs = respectRetryAfter
             ? parseRetryAfter(res.headers.get(retryAfterHeaderName), Date.now())
             : undefined;
-          const waitTime = Math.max(baseWait, retryAfterMs ?? 0);
+
+          let waitTime = Math.max(baseWait, retryAfterMs ?? 0);
+          if (shouldJitter && waitTime > 0 && retryAfterMs === undefined) {
+            // Full Jitter strategy
+            waitTime = Math.round(Math.random() * waitTime);
+          }
+
           const budgetRemainingMs = hasBudget ? Math.max(0, retryBudgetMs - totalWaitMs) : undefined;
 
           if (budgetRemainingMs !== undefined && waitTime > budgetRemainingMs) {
@@ -188,8 +218,21 @@ export function retry(options: RetryOptions): Middleware {
           throw error;
         }
         if (attempts < maxRetries) {
+          if (!isMethodSafe) {
+            appendPolicyTrace(req, {
+              policy: "retry",
+              decision: "skip",
+              at: Date.now(),
+              reason: `method ${req.method} is not idempotent (network error suppressed)`,
+            });
+            throw error;
+          }
           attempts++;
-          const waitTime = backoff ? Math.min(delay * 2 ** (attempts - 1), maxDelay) : delay;
+          let waitTime = backoff ? Math.min(delay * 2 ** (attempts - 1), maxDelay) : delay;
+          if (shouldJitter && waitTime > 0) {
+            waitTime = Math.round(Math.random() * waitTime);
+          }
+
           const budgetRemainingMs = hasBudget ? Math.max(0, retryBudgetMs - totalWaitMs) : undefined;
 
           if (budgetRemainingMs !== undefined && waitTime > budgetRemainingMs) {

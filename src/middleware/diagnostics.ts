@@ -28,11 +28,7 @@ export interface DiagnosticsOptions {
 }
 
 function getMetaValue(req: RequestConfig, key: string): unknown {
-  if (typeof req !== "object" || req === null || !("_meta" in req)) {
-    return undefined;
-  }
-
-  const meta = (req as { _meta?: Readonly<Record<string, unknown>> })._meta;
+  const meta = (req as any).meta;
   if (!meta) {
     return undefined;
   }

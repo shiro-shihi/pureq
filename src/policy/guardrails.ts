@@ -2,7 +2,7 @@ import type { Middleware } from "../types/http";
 
 export interface PolicyMetadata {
   readonly name: string;
-  readonly kind: "timeout" | "retry" | "hedge" | "cache" | "concurrency";
+  readonly kind: "timeout" | "retry" | "hedge" | "cache" | "concurrency" | "validation" | "auth" | "fallback";
   readonly maxRetries?: number;
   readonly maxConcurrent?: number;
 }

@@ -143,7 +143,7 @@ describe("circuit breaker middleware", () => {
     const client = createClient().use(breaker.middleware);
     await client.getResult("https://service-a/api/health");
 
-    const snapshot = breaker.snapshot();
+    const snapshot = await breaker.snapshot();
     expect(snapshot.size).toBe(1);
     expect(snapshot.summary.open).toBe(1);
     expect(snapshot.summary.closed).toBe(0);
@@ -151,8 +151,8 @@ describe("circuit breaker middleware", () => {
     expect(snapshot.entries[0]?.key).toBe("dep-a");
     expect(snapshot.entries[0]?.state).toBe("open");
 
-    breaker.reset("dep-a");
-    expect(breaker.snapshot().size).toBe(0);
+    await breaker.reset("dep-a");
+    expect((await breaker.snapshot()).size).toBe(0);
   });
 
   it("evicts oldest circuits when maxEntries is reached", async () => {
@@ -170,7 +170,7 @@ describe("circuit breaker middleware", () => {
     await client.getResult("https://svc-b.local/health");
     await client.getResult("https://svc-c.local/health");
 
-    const snapshot = breaker.snapshot();
+    const snapshot = await breaker.snapshot();
     expect(snapshot.size).toBe(2);
     const keys = snapshot.entries.map((item) => item.key);
     expect(keys).toEqual(["https://svc-b.local/health", "https://svc-c.local/health"]);
@@ -190,10 +190,10 @@ describe("circuit breaker middleware", () => {
 
     const client = createClient().use(breaker.middleware);
     await client.getResult("https://svc-a.local/health");
-    expect(breaker.snapshot().size).toBe(1);
+    expect((await breaker.snapshot()).size).toBe(1);
 
     vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
-    expect(breaker.snapshot().size).toBe(0);
+    expect((await breaker.snapshot()).size).toBe(0);
   });
 
   it("provides key preset helpers", () => {

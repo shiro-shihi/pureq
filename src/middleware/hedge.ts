@@ -60,13 +60,13 @@ export function hedge(options: HedgeOptions): Middleware {
     const key = keyBuilder(req);
     const startedAt = Date.now();
 
-    // Each fork gets its own deep-copied _meta to prevent
+    // Each fork gets its own deep-copied meta to prevent
     // cross-fork trace pollution (race condition prevention).
     const primaryFork = forkSignal(req.signal);
-    const primaryReq: RequestConfig & { _meta?: Record<string, unknown> } = {
+    const primaryReq: RequestConfig = {
       ...req,
       signal: primaryFork.signal,
-      _meta: deepCopyMeta(req),
+      meta: deepCopyMeta(req),
     };
     const primaryPromise = next(primaryReq);
 
@@ -83,10 +83,10 @@ export function hedge(options: HedgeOptions): Middleware {
     let hedgeFork: { readonly signal: AbortSignal; readonly cleanup: () => void } | undefined;
     const timer = setTimeout(() => {
       hedgeFork = forkSignal(req.signal);
-      const hedgedReq: RequestConfig & { _meta?: Record<string, unknown> } = {
+      const hedgedReq: RequestConfig = {
         ...req,
         signal: hedgeFork.signal,
-        _meta: deepCopyMeta(req),
+        meta: deepCopyMeta(req),
       };
       appendPolicyTrace(hedgedReq, {
         policy: "hedge",

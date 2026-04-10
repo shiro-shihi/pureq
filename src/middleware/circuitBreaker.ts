@@ -46,6 +46,15 @@ export interface CircuitBreakerOptions {
     readonly error?: unknown;
   }) => boolean;
   readonly hooks?: CircuitBreakerHooks;
+  readonly store?: CircuitStateStore;
+}
+
+export interface CircuitStateStore {
+  get(key: string): Promise<CircuitEntry | undefined> | CircuitEntry | undefined;
+  set(key: string, entry: CircuitEntry): Promise<void> | void;
+  delete(key: string): Promise<void> | void;
+  entries(): Promise<Iterable<[string, CircuitEntry]>> | Iterable<[string, CircuitEntry]>;
+  clear?(): Promise<void> | void;
 }
 
 type State = "closed" | "open" | "half-open";
@@ -82,8 +91,8 @@ export interface CircuitSnapshot {
 
 export interface CircuitBreakerController {
   readonly middleware: Middleware;
-  readonly snapshot: () => CircuitSnapshot;
-  readonly reset: (key?: string) => void;
+  readonly snapshot: () => Promise<CircuitSnapshot>;
+  readonly reset: (key?: string) => Promise<void>;
 }
 
 function defaultShouldTrip(context: {
@@ -141,48 +150,73 @@ export function createCircuitBreaker(options: CircuitBreakerOptions = {}): Circu
   const keyBuilder = options.keyBuilder ?? defaultKeyBuilder;
   const maxEntries = options.maxEntries ?? Number.POSITIVE_INFINITY;
   const entryTtlMs = options.entryTtlMs;
-  const entries = new Map<string, CircuitEntry>();
 
-  function evictOldestEntry(): void {
-    const oldestKey = entries.keys().next().value as string | undefined;
+  // Use provided store or default to in-memory Map
+  const internalMap = new Map<string, CircuitEntry>();
+  const store: CircuitStateStore = options.store ?? {
+    get: (key: string) => internalMap.get(key),
+    set: (key: string, entry: CircuitEntry) => { internalMap.set(key, entry); },
+    delete: (key: string) => { internalMap.delete(key); },
+    entries: () => internalMap.entries(),
+    clear: () => internalMap.clear(),
+  };
+
+  async function evictOldestEntry(): Promise<void> {
+    const allEntries = await store.entries();
+    const oldestKey = allEntries[Symbol.iterator]().next().value?.[0];
     if (oldestKey !== undefined) {
-      entries.delete(oldestKey);
+      await store.delete(oldestKey);
     }
   }
 
-  function pruneExpiredEntries(now: number): void {
+  async function pruneExpiredEntries(now: number): Promise<void> {
     if (entryTtlMs === undefined || entryTtlMs <= 0) {
       return;
     }
 
-    for (const [key, entry] of entries) {
+    const allEntries = await store.entries();
+    for (const [key, entry] of allEntries) {
       if (now - entry.lastAccessedAt >= entryTtlMs) {
-        entries.delete(key);
+        await store.delete(key);
       }
     }
   }
 
-  function touchEntry(key: string, entry: CircuitEntry, now: number): void {
+  async function touchEntry(key: string, entry: CircuitEntry, now: number): Promise<void> {
     entry.lastAccessedAt = now;
-    entries.delete(key);
-    entries.set(key, entry);
+    // For Map-based stores, we delete and re-set to maintain insertion order for eviction
+    if (!options.store) {
+      internalMap.delete(key);
+      internalMap.set(key, entry);
+    } else {
+      await store.set(key, entry);
+    }
   }
 
-  function getEntry(key: string, now: number): CircuitEntry {
-    pruneExpiredEntries(now);
+  async function getEntry(key: string, now: number): Promise<CircuitEntry> {
+    await pruneExpiredEntries(now);
 
-    const existing = entries.get(key);
+    const existing = await store.get(key);
     if (existing) {
-      touchEntry(key, existing, now);
+      await touchEntry(key, existing, now);
       return existing;
     }
 
-    while (entries.size >= maxEntries) {
-      evictOldestEntry();
+    let currentSize = 0;
+    if (!options.store) {
+      currentSize = internalMap.size;
+    } else {
+      const all = await store.entries();
+      for (const _ of all) currentSize++;
+    }
+
+    while (currentSize >= maxEntries) {
+      await evictOldestEntry();
+      currentSize--;
     }
 
     const created = createEntry(now);
-    entries.set(key, created);
+    await store.set(key, created);
     return created;
   }
 
@@ -231,8 +265,8 @@ export function createCircuitBreaker(options: CircuitBreakerOptions = {}): Circu
   const middleware: Middleware = async (req, next) => {
     const now = Date.now();
     const key = keyBuilder(req);
-    const entry = getEntry(key, now);
-    touchEntry(key, entry, now);
+    const entry = await getEntry(key, now);
+    await touchEntry(key, entry, now);
 
     if (entry.state === "open") {
       if (now - entry.openedAt < cooldownMs) {
@@ -253,6 +287,35 @@ export function createCircuitBreaker(options: CircuitBreakerOptions = {}): Circu
       const shouldCountFailure = shouldTrip({ key, req, response });
 
       if (shouldCountFailure) {
+          if (entry.state === "half-open") {
+            openCircuit(key, entry, Date.now());
+          } else {
+            entry.failureCount += 1;
+            if (entry.failureCount >= failureThreshold) {
+              openCircuit(key, entry, Date.now());
+            }
+          }
+          await store.set(key, entry);
+          return response;
+        }
+
+        if (entry.state === "half-open") {
+          entry.successCount += 1;
+          if (entry.successCount >= successThreshold) {
+            closeCircuit(key, entry, Date.now());
+          }
+        } else {
+          entry.failureCount = 0;
+        }
+
+        await store.set(key, entry);
+        return response;
+      } catch (error) {
+        const shouldCountFailure = shouldTrip({ key, req, error });
+        if (!shouldCountFailure) {
+          throw error;
+        }
+
         if (entry.state === "half-open") {
           openCircuit(key, entry, Date.now());
         } else {
@@ -261,51 +324,26 @@ export function createCircuitBreaker(options: CircuitBreakerOptions = {}): Circu
             openCircuit(key, entry, Date.now());
           }
         }
-        return response;
-      }
-
-      if (entry.state === "half-open") {
-        entry.successCount += 1;
-        if (entry.successCount >= successThreshold) {
-          closeCircuit(key, entry, Date.now());
-        }
-      } else {
-        entry.failureCount = 0;
-      }
-
-      return response;
-    } catch (error) {
-      const shouldCountFailure = shouldTrip({ key, req, error });
-      if (!shouldCountFailure) {
+        await store.set(key, entry);
         throw error;
-      }
-
-      if (entry.state === "half-open") {
-        openCircuit(key, entry, Date.now());
-      } else {
-        entry.failureCount += 1;
-        if (entry.failureCount >= failureThreshold) {
-          openCircuit(key, entry, Date.now());
+      } finally {
+        if (entry.state === "half-open") {
+          entry.halfOpenProbeInFlight = false;
         }
+
+        await touchEntry(key, entry, Date.now());
       }
-      throw error;
-    } finally {
-      if (entry.state === "half-open") {
-        entry.halfOpenProbeInFlight = false;
-      }
+    };
 
-      touchEntry(key, entry, Date.now());
-    }
-  };
+    const snapshot = async (): Promise<CircuitSnapshot> => {
+      await pruneExpiredEntries(Date.now());
 
-  const snapshot = (): CircuitSnapshot => {
-    pruneExpiredEntries(Date.now());
-
-    const result: CircuitSnapshotEntry[] = [];
-    let closed = 0;
-    let open = 0;
-    let halfOpen = 0;
-    for (const [key, entry] of entries) {
+      const result: CircuitSnapshotEntry[] = [];
+      let closed = 0;
+      let open = 0;
+      let halfOpen = 0;
+      const allEntries = await store.entries();
+      for (const [key, entry] of allEntries) {
       if (entry.state === "closed") {
         closed += 1;
       } else if (entry.state === "open") {
@@ -338,12 +376,21 @@ export function createCircuitBreaker(options: CircuitBreakerOptions = {}): Circu
     };
   };
 
-  const reset = (key?: string): void => {
+  const reset = async (key?: string): Promise<void> => {
     if (key === undefined) {
-      entries.clear();
+      if (store.clear) {
+        await store.clear();
+        return;
+      }
+
+      const allEntries = await store.entries();
+      const entryKeys = Array.from(allEntries, ([entryKey]) => entryKey);
+      for (const entryKey of entryKeys) {
+        await store.delete(entryKey);
+      }
       return;
     }
-    entries.delete(key);
+    await store.delete(key);
   };
 
   return {

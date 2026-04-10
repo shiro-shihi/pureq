@@ -8,6 +8,7 @@ import type {
   ResponseInterceptor,
 } from "../types/http";
 import type { InternalRequestConfig } from "../types/internal";
+import { INTERNAL_MIDDLEWARES } from "../types/internal";
 import type { ExtractParams } from "../utils/url";
 import { compose } from "../middleware/compose";
 import type { HttpResponse } from "../response/response";
@@ -322,13 +323,13 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
     cause?: unknown
   ): PureqErrorMetadata {
     const retryCountFromReq =
-      typeof req._meta?.retryCount === "number" ? req._meta.retryCount : undefined;
+      typeof (req.meta as any)?.retryCount === "number" ? (req.meta as any).retryCount : undefined;
     const retryCountFromCause =
       typeof cause === "object" && cause !== null && "__pureqRetryCount" in cause
         ? (cause as { __pureqRetryCount?: unknown }).__pureqRetryCount
         : undefined;
 
-    const requestId = typeof req._meta?.requestId === "string" ? req._meta.requestId : undefined;
+    const requestId = typeof (req.meta as any)?.requestId === "string" ? (req.meta as any).requestId : undefined;
     const retryCount =
       typeof retryCountFromCause === "number"
         ? retryCountFromCause
@@ -349,12 +350,12 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
     let transformedReq: InternalRequestConfig = req;
 
     const requestId =
-      typeof transformedReq._meta?.requestId === "string"
-        ? transformedReq._meta.requestId
+      typeof (transformedReq.meta as any)?.requestId === "string"
+        ? (transformedReq.meta as any).requestId
         : requestIdFactory();
     const startedAt =
-      typeof transformedReq._meta?.startedAt === "number"
-        ? transformedReq._meta.startedAt
+      typeof (transformedReq.meta as any)?.startedAt === "number"
+        ? (transformedReq.meta as any).startedAt
         : Date.now();
 
     baseOptions.hooks?.onRequestStart?.({
@@ -371,11 +372,11 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
       transformedReq = {
         ...transformedReq,
         ...nextReq,
-        _middlewares: transformedReq._middlewares,
+        [INTERNAL_MIDDLEWARES]: transformedReq[INTERNAL_MIDDLEWARES],
       };
     }
 
-    const allMiddlewares = [...commonMiddlewares, ...transformedReq._middlewares];
+    const allMiddlewares = [...commonMiddlewares, ...transformedReq[INTERNAL_MIDDLEWARES]];
     const dispatchFn = compose(allMiddlewares, executeWithBoundaries);
     let response = await dispatchFn(transformedReq);
 
@@ -395,8 +396,8 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
       durationMs: latencyMs,
       status: response.status,
       retryCount:
-        typeof transformedReq._meta?.retryCount === "number"
-          ? transformedReq._meta.retryCount
+        typeof (transformedReq.meta as any)?.retryCount === "number"
+          ? (transformedReq.meta as any).retryCount
           : 0,
     });
 
@@ -409,9 +410,9 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
     } catch (cause) {
       const error = toPureqError(cause, errorMetadataFromRequest(req, cause));
       const startedAt =
-        typeof req._meta?.startedAt === "number" ? req._meta.startedAt : Date.now();
+        typeof (req.meta as any)?.startedAt === "number" ? (req.meta as any).startedAt : Date.now();
       const requestId =
-        typeof req._meta?.requestId === "string" ? req._meta.requestId : requestIdFactory();
+        typeof (req.meta as any)?.requestId === "string" ? (req.meta as any).requestId : requestIdFactory();
       const latencyMs = Date.now() - startedAt;
 
       baseOptions.hooks?.onRequestError?.({
@@ -519,13 +520,13 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
       headers: mergedHeaders,
-      _middlewares: [],
-      _meta: {
+      [INTERNAL_MIDDLEWARES]: [],
+      meta: {
         requestId,
         startedAt: Date.now(),
         retryCount: 0,
       },
-    };
+    } as InternalRequestConfig;
   }
 
   function prepareFetchRequest(

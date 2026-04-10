@@ -27,6 +27,17 @@ Zero runtime dependencies. Works everywhere `fetch` works.
 npm install @pureq/pureq
 ```
 
+### Node.js (with FileSystem support)
+
+If using Node.js specific adapters (like `FileSystemQueueStorageAdapter`), use the node subpath:
+
+```ts
+import { FileSystemQueueStorageAdapter } from "pureq/node";
+```
+
+> [!NOTE]
+> Using this subpath ensures that Node.js native modules (like `fs` or `path`) are not accidentally bundled into your frontend builds (Webpack/Vite/Esbuild), preventing build-time errors and keeping bundle sizes small.
+
 ## Quick Start
 
 ### The simplest case
@@ -68,8 +79,8 @@ const result = await client.getResult("/users/:id", {
 });
 
 if (!result.ok) {
-  // result.error.kind: "network" | "timeout" | "aborted" | "http" | "circuit-open" | "unknown"
-  console.error(result.error.kind, result.error.message);
+  // kind: human-friendly, code: machine-friendly (same error concept in two formats)
+  console.error(result.error.kind, result.error.code, result.error.message);
   return;
 }
 
@@ -77,6 +88,23 @@ const response = result.data; // HttpResponse
 ```
 
 Every request method has a `*Result` variant that never throws — transport failures become values you can pattern-match on.
+
+### Systematic Error Codes
+
+For enterprise-grade observability, `PureqError` exposes both `kind` and `code` on the same error object. They represent the same category in two formats:
+
+- `kind`: human-friendly lowercase string (e.g. `"timeout"`)
+- `code`: machine-readable Screaming Snake Case (e.g. `"PUREQ_TIMEOUT"`)
+
+```ts
+if (!result.ok) {
+  if (result.error.kind === "timeout" && result.error.code === "PUREQ_TIMEOUT") {
+    // Handle specifically...
+  }
+}
+```
+
+Common codes: `PUREQ_TIMEOUT`, `PUREQ_NETWORK_ERROR`, `PUREQ_OFFLINE_QUEUE_FULL`, `PUREQ_AUTH_REFRESH_FAILED`, `PUREQ_VALIDATION_ERROR`.
 
 ---
 
@@ -300,7 +328,9 @@ const client = createClient({ baseURL: "https://api.example.com" })
   .use(dedupe())                                         // collapse duplicate in-flight GETs
   .use(httpCache({ ttlMs: 10_000, maxEntries: 200 }))    // in-memory cache with LRU eviction
   .use(retry({ maxRetries: 3, delay: 200, backoff: true })) // exponential backoff
-  .use(circuitBreaker({ failureThreshold: 5, cooldownMs: 30_000 }));
+  .use(circuitBreaker({ failureThreshold: 5, cooldownMs: 30_000 }))
+  .use(validation({ validate: (data) => !!data }))       // zero-dependency schema validation
+  .use(fallback({ value: { body: "default", status: 200 } as any })); // graceful degradation
 ```
 
 ### Retry
@@ -313,13 +343,17 @@ import { retry } from "pureq";
 client.use(retry({
   maxRetries: 3,
   delay: 200,
+  methods: ["GET", "PUT", "DELETE"], // Safe defaults: idempotent methods only
   backoff: true,
-  maxDelay: 5_000,
-  retryBudgetMs: 2000,            // total time cap across all retries
-  retryOnStatus: [429, 500, 502, 503, 504],
-  respectRetryAfter: true,
   onRetry: ({ attempt, error }) => console.warn(`Retry #${attempt}`, error),
 }));
+```
+
+**Safety First**: By default, `retry` only targets idempotent methods. To retry `POST` or `PATCH`, you must explicitly add them to `methods` and ensure the backend supports idempotency keys.
+
+```text
+POST /api/orders HTTP/1.1
+Idempotency-Key: abc-123
 ```
 
 ### Deadline Propagation
@@ -407,20 +441,37 @@ Queues mutation requests when offline and replays them when connectivity restore
 ```ts
 import { createOfflineQueue, idempotencyKey } from "pureq";
 
+// 1. Create durable storage (IndexedDB for browser, FS for Node)
+const storage = new IndexedDBQueueStorageAdapter();
+
+// 2. (Optional) Wrap with encryption for enterprise security
+// myCryptoKey can come from crypto.subtle.generateKey(...) or importKey/deriveKey from a password.
+const encryptedStorage = new EncryptedQueueStorageAdapter(storage, myCryptoKey);
+
 const queue = createOfflineQueue({
+  storage: encryptedStorage,
   methods: ["POST", "PUT", "PATCH"],
-  maxQueueSize: 100,
+  ttlMs: 24 * 60 * 60 * 1000, // 24h expiration
+  lockName: "my-app-offline-lock", // Multi-tab coordination
 });
 
 const client = createClient()
-  .use(idempotencyKey())   // strongly recommended with offlineQueue
+  .use(idempotencyKey())
   .use(queue.middleware);
 
 // Later, when back online:
-await queue.flush(
-  (req) => client.post(req.url, req.body),
-  { concurrency: 3 }  // parallel replay
-);
+await queue.flush((req) => client.post(req.url, req.body));
+```
+
+**Durable Adapters**:
+
+- `IndexedDBQueueStorageAdapter`: Standard browser persistence.
+- `FileSystemQueueStorageAdapter`: Node.js persistence (import from `pureq/node`).
+- `EncryptedQueueStorageAdapter`: Wrapper that encrypts data at rest using AES-GCM.
+
+```ts
+// Example: Creating an encrypted storage
+const encrypted = new EncryptedQueueStorageAdapter(new IndexedDBQueueStorageAdapter(), key);
 ```
 
 ### Idempotency Keys
@@ -433,6 +484,63 @@ import { idempotencyKey } from "pureq";
 client.use(idempotencyKey({
   headerName: "Idempotency-Key",   // default
   methods: ["POST", "PUT", "PATCH", "DELETE"],
+}));
+```
+
+### Auth Refresh
+
+Automatically handles 401 Unauthorized errors by refreshing the token and retrying the request. Includes built-in "thundering herd" prevention to ensure only one refresh request is in-flight at a time.
+
+```ts
+import { authRefresh } from "pureq";
+
+client.use(authRefresh({
+  refresh: async () => {
+    const res = await fetch("/api/refresh", { method: "POST" });
+    return (await res.json()).token;
+  },
+  // Optional: customize how the request is updated
+  updateRequest: (req, token) => ({
+    ...req,
+    headers: { ...req.headers, Authorization: `Bearer ${token}` }
+  })
+}));
+```
+
+### Validation
+
+A zero-dependency bridge to any schema validation library (Zod, Valibot, etc.) or custom type guards.
+
+```ts
+import { validation } from "pureq";
+import { z } from "zod";
+
+const UserSchema = z.object({ id: z.string(), name: z.string() });
+
+client.use(validation({
+  validate: (data) => UserSchema.parse(data), // Throws PUREQ_VALIDATION_ERROR on failure
+  message: "Invalid API response schema"
+}));
+```
+
+### Fallback
+
+Enables "Graceful Degradation" by returning a default value or cached data when a request fails.
+
+```ts
+import { fallback, HttpResponse, type PureqError } from "pureq";
+
+const isPureqError = (value: unknown): value is PureqError => {
+  return typeof value === "object" && value !== null && "code" in value && "kind" in value;
+};
+
+client.use(fallback({
+  value: new HttpResponse(new Response(JSON.stringify({ items: [] }), { status: 200 })),
+  when: (trigger) =>
+    trigger.type === "error" &&
+    isPureqError(trigger.error) &&
+    trigger.error.code === "PUREQ_TIMEOUT" &&
+    trigger.error.kind === "timeout"
 }));
 ```
 
@@ -521,6 +629,24 @@ const client = createClient().use(diagnostics.middleware);
 // Inspect metrics
 const snap = diagnostics.snapshot();
 console.log(snap.p50, snap.p95, snap.total, snap.success, snap.failed);
+```
+
+### Policy Tracing (Debuggability)
+
+Ever wonder *why* a request was retried or why the circuit opened? `pureq` records a detailed decision trace for every request.
+
+```ts
+import { explainPolicyTrace } from "pureq";
+
+try {
+  await client.get("/flakey-endpoint");
+} catch (err) {
+  // Prints exactly what happened:
+  // [2026-04-10T10:00:00Z] RETRY: RETRY (status=503)
+  // [2026-04-10T10:00:01Z] RETRY: RETRY (status=503)
+  // [2026-04-10T10:00:02Z] CIRCUIT-BREAKER: TRIP (reason="failure threshold exceeded")
+  console.log(explainPolicyTrace(err.request));
+}
 ```
 
 ### OpenTelemetry integration
@@ -828,12 +954,15 @@ More details: [Runtime compatibility matrix](./docs/runtime_compatibility_matrix
 | Middleware | Purpose |
 | --------- | ------- |
 | `retry(options)` | Exponential backoff, Retry-After, budget |
+| `authRefresh(options)` | Automatic token refresh (thundering herd prevention) |
 | `deadline(options)` | Total request budget across retries |
 | `defaultTimeout(ms)` | Default per-request timeout |
 | `circuitBreaker(options)` | Fail-fast on repeated failures |
 | `concurrencyLimit(options)` | Cap in-flight requests |
 | `dedupe(options?)` | Collapse duplicate concurrent requests |
 | `hedge(options)` | Duplicate request for tail latency |
+| `validation(options)` | Schema validation bridge (Zod/Valibot ready) |
+| `fallback(options)` | Graceful degradation with fallback values |
 | `httpCache(options)` | In-memory cache with ETag/stale-if-error |
 | `createOfflineQueue(options?)` | Offline mutation queue with replay |
 | `idempotencyKey(options?)` | Auto-inject idempotency headers |

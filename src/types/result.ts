@@ -12,7 +12,16 @@ export type Err<E> = {
 
 export type Result<T, E> = Ok<T> | Err<E>;
 
-export type PureqErrorKind = "network" | "timeout" | "aborted" | "http" | "circuit-open" | "unknown";
+export type PureqErrorKind =
+  | "network"
+  | "timeout"
+  | "aborted"
+  | "http"
+  | "circuit-open"
+  | "storage-error"
+  | "auth-error"
+  | "validation-error"
+  | "unknown";
 
 export interface PureqErrorMetadata {
   readonly requestId?: string;
@@ -20,10 +29,12 @@ export interface PureqErrorMetadata {
   readonly url?: string;
   readonly retryCount?: number;
   readonly rootCause?: string;
+  readonly code?: string;
 }
 
 export interface PureqError {
   readonly kind: PureqErrorKind;
+  readonly code: string;
   readonly message: string;
   readonly cause: unknown;
   readonly status?: number;
@@ -50,7 +61,6 @@ function extractRetryCount(cause: unknown): number | undefined {
 }
 
 function inferRootCause(cause: unknown): string {
-  // DOMException extends Error, so a single instanceof Error check covers both.
   if (cause instanceof Error) {
     return cause.name;
   }
@@ -76,19 +86,30 @@ export function toPureqError(cause: unknown, metadata: PureqErrorMetadata = {}):
     ...(rootCause !== undefined ? { rootCause } : {}),
   };
 
+  // Explicit code from metadata takes precedence
+  if (metadata.code) {
+    return {
+      kind: (cause as any).kind ?? "unknown",
+      code: metadata.code,
+      message,
+      cause,
+      metadata: normalizedMetadata
+    };
+  }
+
   if (cause instanceof Error && cause.message.includes("request timeout")) {
-    return { kind: "timeout", message, cause, metadata: normalizedMetadata };
+    return { kind: "timeout", code: "PUREQ_TIMEOUT", message, cause, metadata: normalizedMetadata };
   }
 
   if (
     cause instanceof DOMException &&
     cause.name === "AbortError"
   ) {
-    return { kind: "aborted", message, cause, metadata: normalizedMetadata };
+    return { kind: "aborted", code: "PUREQ_ABORTED", message, cause, metadata: normalizedMetadata };
   }
 
   if (isTypeErrorLike || looksLikeNetworkMessage) {
-    return { kind: "network", message, cause, metadata: normalizedMetadata };
+    return { kind: "network", code: "PUREQ_NETWORK_ERROR", message, cause, metadata: normalizedMetadata };
   }
 
   if (
@@ -97,11 +118,24 @@ export function toPureqError(cause: unknown, metadata: PureqErrorMetadata = {}):
       message.includes("circuit breaker is open") ||
       message.includes("half-open probe in flight"))
   ) {
-    return { kind: "circuit-open", message, cause, metadata: normalizedMetadata };
+    return { kind: "circuit-open", code: "PUREQ_CIRCUIT_OPEN", message, cause, metadata: normalizedMetadata };
   }
 
-  return { kind: "unknown", message, cause, metadata: normalizedMetadata };
+  // Handle errors that already have a code property (e.g. from our new subsystems)
+  const anyCause = cause as any;
+  if (anyCause && typeof anyCause.code === "string") {
+    return {
+      kind: anyCause.kind ?? "unknown",
+      code: anyCause.code,
+      message,
+      cause,
+      metadata: normalizedMetadata
+    };
+  }
+
+  return { kind: "unknown", code: "PUREQ_UNKNOWN_ERROR", message, cause, metadata: normalizedMetadata };
 }
+
 
 export function httpErrorFromResponse(response: HttpResponse, metadata: PureqErrorMetadata = {}): PureqError {
   const base = `HTTP ${response.status}`;
@@ -109,6 +143,7 @@ export function httpErrorFromResponse(response: HttpResponse, metadata: PureqErr
 
   return {
     kind: "http",
+    code: "PUREQ_HTTP_ERROR",
     message: `${base}${detail}`,
     cause: response,
     status: response.status,

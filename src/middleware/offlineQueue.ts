@@ -31,15 +31,22 @@ export interface OfflineQueueOptions {
   readonly methods?: readonly RequestConfig["method"][];
   readonly isOffline?: () => boolean;
   readonly maxQueueSize?: number;
+  readonly ttlMs?: number;
   readonly hooks?: OfflineQueueHooks;
   readonly storage?: OfflineQueueStorageAdapter;
   readonly generateId?: () => number | Promise<number>;
+  /**
+   * Optional lock name for cross-tab coordination (Web Locks API).
+   * If provided, only one tab will be able to flush the queue at a time.
+   */
+  readonly lockName?: string;
 }
 
 export interface QueuedRequest {
   readonly id: number;
   readonly req: RequestConfig;
   readonly queuedAt: number;
+  readonly expiresAt?: number;
 }
 
 export interface OfflineQueueStorageAdapter {
@@ -81,6 +88,8 @@ export interface OfflineQueueSnapshot {
     readonly method: RequestConfig["method"];
     readonly url: string;
     readonly queuedAt: number;
+    readonly expiresAt?: number;
+    readonly priority: number;
   }[];
 }
 
@@ -94,12 +103,8 @@ export interface OfflineQueueController {
   readonly clear: () => Promise<void>;
 }
 
-// appendPolicyTrace is imported from ../utils/policyTrace
-
 /**
  * Creates a serializable copy of the request suitable for offline storage.
- * Deliberately excludes AbortSignal since it is not serializable and
- * would reference a stale controller upon replay.
  */
 function cloneRequestForQueue(req: RequestConfig): RequestConfig {
   return {
@@ -110,6 +115,8 @@ function cloneRequestForQueue(req: RequestConfig): RequestConfig {
     ...(req.body !== undefined ? { body: req.body } : {}),
     ...(req.headers !== undefined ? { headers: { ...req.headers } } : {}),
     ...(req.timeout !== undefined ? { timeout: req.timeout } : {}),
+    ...(req.priority !== undefined ? { priority: req.priority } : {}),
+    ...(req.meta !== undefined ? { meta: { ...req.meta } } : {}),
   };
 }
 
@@ -119,6 +126,9 @@ function cloneRequestForQueue(req: RequestConfig): RequestConfig {
 export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQueueController {
   const methods = new Set(options.methods ?? ["POST", "PUT", "PATCH", "DELETE"]);
   const maxQueueSize = options.maxQueueSize ?? 500;
+  const ttlMs = options.ttlMs;
+  const lockName = options.lockName;
+
   const isOffline = options.isOffline ?? (() => {
     if (typeof navigator === "undefined") {
       return false;
@@ -138,17 +148,26 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
 
     const currentSize = await storage.size();
     if (currentSize >= maxQueueSize) {
-      throw new Error("pureq: offline queue is full");
+      const error = new Error("pureq: offline queue is full");
+      (error as any).code = "PUREQ_OFFLINE_QUEUE_FULL";
+      (error as any).kind = "storage-error";
+      throw error;
     }
 
     const id = await generateId();
     const queuedAt = Date.now();
+    const expiresAt = ttlMs !== undefined ? queuedAt + ttlMs : undefined;
     
-    await storage.push({
+    const item: QueuedRequest = {
       id,
       req: cloneRequestForQueue(req),
       queuedAt,
-    });
+    };
+    if (expiresAt !== undefined) {
+      (item as any).expiresAt = expiresAt;
+    }
+    
+    await storage.push(item);
 
     appendPolicyTrace(req, {
       policy: "offline-queue",
@@ -162,7 +181,7 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
 
     return new PureqHttpResponse(
       new Response(
-        JSON.stringify({ queued: true, queueId: id }),
+        JSON.stringify({ queued: true, queueId: id, expiresAt }),
         {
           status: 202,
           headers: { "content-type": "application/json" },
@@ -171,26 +190,43 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
     );
   };
 
-  const flush = async (
+  const performFlush = async (
     replay: (req: RequestConfig) => Promise<HttpResponse>,
-    options?: { readonly concurrency?: number }
+    flushOptions?: { readonly concurrency?: number }
   ): Promise<readonly HttpResponse[]> => {
-    const pending = await storage.getAll();
-    const concurrency = options?.concurrency ?? 1;
+    const rawPending = await storage.getAll();
+    const now = Date.now();
 
+    // 1. Filter out expired requests
+    const expiredIds: number[] = [];
+    const pendingWithTtl = rawPending.filter((item) => {
+      if (item.expiresAt !== undefined && item.expiresAt < now) {
+        expiredIds.push(item.id);
+        return false;
+      }
+      return true;
+    });
+
+    await Promise.all(expiredIds.map((id) => storage.remove(id)));
+
+    // 2. Sort by priority (descending) and then by queuedAt (ascending)
+    const pending = [...pendingWithTtl].sort((a, b) => {
+      const priorityA = a.req.priority ?? 0;
+      const priorityB = b.req.priority ?? 0;
+      if (priorityA !== priorityB) {
+        return priorityB - priorityA;
+      }
+      return a.queuedAt - b.queuedAt;
+    });
+
+    const concurrency = flushOptions?.concurrency ?? 1;
     const responses: HttpResponse[] = [];
 
     if (concurrency <= 1) {
-      // Sequential replay (default, safest for ordering guarantees)
       for (const item of pending) {
         try {
           const response = await replay(item.req);
           responses.push(response);
-
-          // Remove from queue only after successful replay.
-          // NOTE: If the app crashes between successful replay and this removal,
-          // the request might be replayed again upon restart. It is strongly recommended
-          // to use `idempotencyKey` middleware to prevent duplicate operations on the backend.
           await storage.remove(item.id);
 
           hooks?.onReplayed?.({
@@ -201,7 +237,6 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
             status: response.status,
           });
         } catch (error) {
-          // Leave in storage on failure (defer to next flush or retry budgets)
           hooks?.onReplayError?.({
             id: item.id,
             method: item.req.method,
@@ -212,7 +247,7 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
         }
       }
     } else {
-      // Concurrent replay in batches of `concurrency`
+      // Concurrent replay in batches
       for (let i = 0; i < pending.length; i += concurrency) {
         const batch = pending.slice(i, i + concurrency);
         const results = await Promise.allSettled(
@@ -253,16 +288,37 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
     return responses;
   };
 
+  const flush = async (
+    replay: (req: RequestConfig) => Promise<HttpResponse>,
+    flushOptions?: { readonly concurrency?: number }
+  ): Promise<readonly HttpResponse[]> => {
+    // If Web Locks API is available and lockName is provided, wrap in a lock
+    if (lockName && typeof navigator !== "undefined" && navigator.locks) {
+      return navigator.locks.request(lockName, async () => {
+        return performFlush(replay, flushOptions);
+      }) as unknown as Promise<readonly HttpResponse[]>;
+    }
+
+    return performFlush(replay, flushOptions);
+  };
+
   const snapshot = async (): Promise<OfflineQueueSnapshot> => {
     const items = await storage.getAll();
     return {
       size: items.length,
-      items: items.map((item) => ({
-        id: item.id,
-        method: item.req.method,
-        url: item.req.url,
-        queuedAt: item.queuedAt,
-      })),
+      items: items.map((item) => {
+        const result = {
+          id: item.id,
+          method: item.req.method,
+          url: item.req.url,
+          queuedAt: item.queuedAt,
+          priority: item.req.priority ?? 0,
+        } as any;
+        if (item.expiresAt !== undefined) {
+          result.expiresAt = item.expiresAt;
+        }
+        return result;
+      }),
     };
   };
 
@@ -280,6 +336,8 @@ export function createOfflineQueue(options: OfflineQueueOptions = {}): OfflineQu
     clear,
   };
 }
+
+
 
 /**
  * Middleware shortcut when queue controls are not needed directly.

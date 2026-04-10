@@ -60,6 +60,14 @@ export interface RequestConfig {
    * Timeout in milliseconds
    */
   readonly timeout?: number;
+  /**
+   * Request priority (higher numbers executed first in queues)
+   */
+  readonly priority?: number;
+  /**
+   * Arbitrary metadata for middleware/interceptors
+   */
+  readonly meta?: Readonly<Record<string, unknown>>;
 }
 
 /**

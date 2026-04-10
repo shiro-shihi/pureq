@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compose } from "../src/middleware/compose";
 import { HttpResponse } from "../src/response/response";
+import { INTERNAL_MIDDLEWARES } from "../src/types/internal";
 
 describe("compose", () => {
   it("throws when next() is called multiple times", async () => {
@@ -20,7 +21,7 @@ describe("compose", () => {
       fn({
         method: "GET",
         url: "https://example.com/health",
-        _middlewares: [],
+        [INTERNAL_MIDDLEWARES]: [],
       })
     ).rejects.toThrow("next() was called multiple times");
   });

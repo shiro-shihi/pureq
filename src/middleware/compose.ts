@@ -1,5 +1,6 @@
 import type { Middleware } from "../types/http";
 import type { InternalRequestConfig } from "../types/internal";
+import { INTERNAL_MIDDLEWARES } from "../types/internal";
 import type { HttpResponse } from "../response/response";
 import { execute } from "../executor/execute";
 
@@ -36,7 +37,7 @@ export function compose(
           const nextReq: InternalRequestConfig = {
             ...currentConfig,
             ...nextConfig,
-            _middlewares: currentConfig._middlewares,
+            [INTERNAL_MIDDLEWARES]: currentConfig[INTERNAL_MIDDLEWARES],
           };
 
           try {
