@@ -6,7 +6,7 @@ Functional, immutable, type-safe HTTP transport layer for TypeScript.
 
 ---
 
-**pureq** is not another fetch wrapper. It's a **policy-first transport layer** that makes HTTP behavior explicit, composable, and observable — across frontend, BFF, backend, and edge runtimes.
+**pureq** is not another fetch wrapper. It's a **policy-first transport layer** that makes HTTP behavior explicit, composable, and observable across frontend, BFF, backend, and edge runtimes.
 
 ```ts
 import { createClient, retry, circuitBreaker, dedupe } from "pureq";
@@ -19,7 +19,7 @@ const api = createClient({ baseURL: "https://api.example.com" })
 const user = await api.getJson<User>("/users/:id", { params: { id: "42" } });
 ```
 
-Zero runtime dependencies. Works everywhere `fetch` works.
+Zero runtime dependencies in the core package. Works everywhere `fetch` works.
 
 ## Install
 
@@ -36,55 +36,83 @@ import { FileSystemQueueStorageAdapter } from "pureq/node";
 ```
 
 > [!NOTE]
-> Using this subpath ensures that Node.js native modules (like `fs` or `path`) are not accidentally bundled into your frontend builds (Webpack/Vite/Esbuild), preventing build-time errors and keeping bundle sizes small.
+> Core package (`pureq`) is zero-dependency and runtime-agnostic.
+> Node-only adapters (for example `FileSystemQueueStorageAdapter`) live behind `pureq/node` so browser bundles stay clean and small.
 
 ## Quick Start
 
-### The simplest case
+### A quicker start than raw fetch
 
 ```ts
 import { createClient } from "pureq";
 
-const client = createClient();
+type User = { id: string; name: string };
 
-const response = await client.get("https://api.example.com/health");
-console.log(response.status); // 200
-```
+const client = createClient({ baseURL: "https://api.example.com" });
 
-### Typed path parameters
-
-```ts
-// TypeScript ensures you provide { id: string } for :id
-const response = await client.get("/users/:id", {
-  params: { id: "42" },
+// GET + status check + JSON parse + typed path params
+const user = await client.getJson<User>("/users/:userId", {
+  params: { userId: "42" },
 });
 
-const user = await response.json<{ id: string; name: string }>();
+console.log(user.name);
 ```
 
-### JSON helpers (one-liner)
+### Type-safe path parameters (Template Literal Types)
 
 ```ts
-// GET + status check + JSON parse in one step
-const user = await client.getJson<User>("/users/:id", {
-  params: { id: "42" },
+// Param keys are derived from the URL template at compile time.
+
+// ✅ Compiles
+await client.get("/users/:userId/posts/:postId", {
+  params: { userId: "1", postId: "42" },
+});
+
+// ❌ TypeScript error: missing postId
+await client.get("/users/:userId/posts/:postId", {
+  params: { userId: "1" },
 });
 ```
 
-### Non-throwing Result API
+### Result API to prevent missed error handling
 
 ```ts
-const result = await client.getResult("/users/:id", {
-  params: { id: "42" },
+const result = await client.getJsonResult<User>("/users/:userId", {
+  params: { userId: "42" },
 });
 
 if (!result.ok) {
-  // kind: human-friendly, code: machine-friendly (same error concept in two formats)
-  console.error(result.error.kind, result.error.code, result.error.message);
+  // Switching on kind gives explicit, exhaustive transport handling.
+  switch (result.error.kind) {
+    case "network":
+      showOfflineBanner();
+      break;
+    case "timeout":
+      showRetryToast();
+      break;
+    case "http":
+      if (result.error.status === 401) redirectToLogin();
+      break;
+    case "circuit-open":
+      switchToFallbackMode();
+      break;
+    case "aborted":
+    case "storage-error":
+    case "auth-error":
+    case "validation-error":
+    case "unknown":
+      reportTransportError(result.error);
+      break;
+    default: {
+      const exhaustive: never = result.error.kind;
+      throw new Error(`Unhandled error kind: ${exhaustive}`);
+    }
+  }
   return;
 }
 
-const response = result.data; // HttpResponse
+// result.data is strongly typed JSON
+renderUser(result.data);
 ```
 
 Every request method has a `*Result` variant that never throws — transport failures become values you can pattern-match on.
@@ -243,15 +271,55 @@ const withAuth = withRetry.useRequestInterceptor((req) => ({
 
 This makes it trivial to share a base client while customizing per-dependency behavior.
 
+### The "Why" of Immutability
+
+Unlike mutable interceptor stacks, pureq clients are branchable snapshots.
+
+```ts
+import { authRefresh, createClient, dedupe, retry } from "pureq";
+
+const base = createClient({ baseURL: "https://api.example.com" })
+  .use(retry({ maxRetries: 2, delay: 200 }));
+
+// Public API: cache-friendly and lightweight
+const publicApi = base.use(dedupe({ methods: ["GET", "HEAD"] }));
+
+// Auth API: isolated auth policy without mutating publicApi
+const authedApi = base
+  .use(authRefresh({ refresh: refreshToken }))
+  .useRequestInterceptor((req) => ({
+    ...req,
+    headers: { ...req.headers, Authorization: `Bearer ${getToken()}` },
+  }));
+```
+
+This pattern is especially useful in BFFs: you keep shared defaults, then safely branch per upstream or trust boundary.
+
 ### Middleware: the Onion Model
 
 Middleware wraps the entire request lifecycle. Each middleware can intercept the request before it happens, await the result, and post-process the response:
 
 ```text
-Request → [dedupe] → [retry] → [circuitBreaker] → fetch() → Response
-                                                       ↑
-                                              the "onion" unwinds
+Request
+  -> [dedupe]
+  -> [retry]
+  -> [circuitBreaker]
+  -> [adapter/fetch]
+  <- [circuitBreaker]
+  <- [retry]
+  <- [dedupe]
+Response
 ```
+
+Think of `retry` and `circuitBreaker` as wrappers around `next()`.
+
+- Outer wrappers see the whole execution envelope.
+- Inner wrappers only see what reaches them.
+
+That is why order changes behavior. Example:
+
+- `retry` outside `circuitBreaker`: each retry attempt passes through breaker logic.
+- `circuitBreaker` outside `retry`: breaker sees one wrapped operation that may include internal retries.
 
 Middleware can:
 
@@ -332,6 +400,23 @@ const client = createClient({ baseURL: "https://api.example.com" })
   .use(validation({ validate: (data) => !!data }))       // zero-dependency schema validation
   .use(fallback({ value: { body: "default", status: 200 } as any })); // graceful degradation
 ```
+
+### Standard Order (recommended)
+
+For most production stacks, this order is a safe default:
+
+```text
+[dedupe] -> [httpCache] -> [retry] -> [circuitBreaker] -> [validation] -> [adapter]
+```
+
+Why this order:
+
+- `dedupe` outermost to collapse duplicate in-flight work early.
+- `httpCache` before retry to short-circuit cache hits.
+- `retry` before `circuitBreaker` so each attempt is still guarded by breaker state.
+- `validation` near the inner edge to validate final payloads before returning to callers.
+
+If order is reversed accidentally, behavior can drift (for example, retrying inside a layer you expected to run once).
 
 ### Retry
 
@@ -496,6 +581,7 @@ import { authRefresh } from "pureq";
 
 client.use(authRefresh({
   refresh: async () => {
+    // Multiple 401s will only trigger ONE refresh call.
     const res = await fetch("/api/refresh", { method: "POST" });
     return (await res.json()).token;
   },
@@ -587,7 +673,7 @@ for (const mw of backendPreset()) backend = backend.use(mw);
 | `frontendPreset()` | 5s | 1 | GET/HEAD | 4 failures / 10s cooldown | ✅ |
 | `bffPreset()` | 3s | 2 | GET/HEAD | 5 failures / 20s cooldown | ✅ body-only |
 | `backendPreset()` | 2.5s | 3 | off | 6 failures / 30s cooldown | ✅ body-only |
-| `resilientPreset()` | — | 2 | All | 5 failures / 30s cooldown | ✅ |
+| `resilientPreset()` | none (pair with `defaultTimeout()` if needed) | 2 | GET/HEAD | 5 failures / 30s cooldown | ✅ |
 
 All presets are built from the same public middleware. You can inspect and override any parameter.
 
@@ -912,6 +998,20 @@ pureq works anywhere `fetch` is available:
 Zero dependencies. ESM-first. Tree-shakeable.
 
 More details: [Runtime compatibility matrix](./docs/runtime_compatibility_matrix.md)
+
+---
+
+## Production Readiness Checklist
+
+If you are adopting pureq in a production service, start with these defaults:
+
+- Set a request time budget (`defaultTimeout()` or `deadline()`) first.
+- Add `retry()` with explicit status/method policy.
+- Add `validation()` for critical response payloads.
+- Add `circuitBreaker()` for unstable upstreams.
+- Enable diagnostics hooks (`onRequestStart/onRequestSuccess/onRequestError`).
+- Prefer `*Result` APIs on boundary layers to avoid unhandled transport errors.
+- Use `idempotencyKey()` before retrying write operations.
 
 ---
 
