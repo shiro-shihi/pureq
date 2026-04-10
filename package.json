@@ -1,0 +1,63 @@
+{
+  "name": "@pureq/pureq",
+  "version": "1.0.0",
+  "description": "Functional, immutable, and type-safe HTTP client layer with middleware composition.",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "benchmark": "tsx ./scripts/benchmark.ts",
+    "test:browser": "vitest run tests/browser-runtime.smoke.test.ts --environment jsdom",
+    "test:edge": "esbuild scripts/edge-smoke-entry.ts --bundle --format=iife --platform=browser --outfile=.tmp/edge-smoke.bundle.js && node ./scripts/run-edge-smoke.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests --exclude tests/*.integration.test.ts --exclude tests/*.contract.test.ts --exclude tests/*.stress.test.ts",
+    "test:integration": "vitest run tests/client.integration.test.ts",
+    "test:contract": "vitest run tests/public-api.contract.test.ts",
+    "test:stress": "vitest run tests/retry.stress.test.ts",
+    "test:ci": "npm run test:unit && npm run test:integration && npm run test:contract && npm run test:stress && npm run typecheck"
+  },
+  "keywords": [
+    "http",
+    "fetch",
+    "client",
+    "middleware",
+    "retry",
+    "circuit-breaker",
+    "typescript"
+  ],
+  "author": "shiro-shihi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiro-shihi/pureq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shiro-shihi/pureq/issues"
+  },
+  "homepage": "https://github.com/shiro-shihi/pureq#readme",
+  "type": "module",
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^24.5.2",
+    "esbuild": "^0.25.11",
+    "jsdom": "^27.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  }
+}
