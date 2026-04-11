@@ -2,7 +2,7 @@
 
 Functional, immutable, and type-safe HTTP transport layer for TypeScript.
 
-[Getting Started](./docs/getting_started.md) | [Documentation](./docs/README.md) | [Middleware Reference](./docs/middleware_reference.md) | [GitHub](https://github.com/shiro-shihi/pureq)
+[Getting Started](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/getting_started.md) | [Documentation](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/README.md) | [Middleware Reference](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/middleware_reference.md) | [GitHub](https://github.com/shiro-shihi/pureq)
 
 ---
 
@@ -30,14 +30,14 @@ const user = await api.getJson<User>("/users/:id", { params: { id: "42" } });
 
 ## Documentation
 
-- [Getting Started](./docs/getting_started.md)
-- [Core Concepts](./docs/core_concepts.md)
-- [API Reference](./docs/api_reference.md)
-- [Middleware Reference](./docs/middleware_reference.md)
-- [Error Handling](./docs/error_handling.md)
-- [Observability](./docs/observability.md)
-- [Migration Guide](./docs/migration_guide.md)
-- [Benchmarks](./docs/benchmarks.md)
+- [Getting Started](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/getting_started.md)
+- [Core Concepts](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/core_concepts.md)
+- [API Reference](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/api_reference.md)
+- [Middleware Reference](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/middleware_reference.md)
+- [Error Handling](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/error_handling.md)
+- [Observability](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/observability.md)
+- [Migration Guide](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/migration_guide.md)
+- [Benchmarks](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/benchmarks.md)
 
 ## License
 

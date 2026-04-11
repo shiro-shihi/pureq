@@ -2,7 +2,7 @@
 
 ## Functional, immutable, and type-safe HTTP transport layer for TypeScript
 
-[Get Started](./docs/getting_started.md) | [Documentation](./docs/README.md) | [Middleware Reference](./docs/middleware_reference.md) | [GitHub](https://github.com/shiro-shihi/pureq)
+[Get Started](./packages/pureq/docs/getting_started.md) | [Documentation](./packages/pureq/docs/README.md) | [Middleware Reference](./packages/pureq/docs/middleware_reference.md) | [GitHub](https://github.com/shiro-shihi/pureq)
 
 ---
 
@@ -41,12 +41,12 @@ The core philosophy of pureq is that **transport is a policy**. Communication be
 
 | Guide | Description |
 | --- | --- |
-| [Getting Started](./docs/getting_started.md) | Installation and your first request |
-| [Core Concepts](./docs/core_concepts.md) | Immutability, the Onion Model, and Path Typing |
-| [Middleware Reference](./docs/middleware_reference.md) | Detailed guide for all reliability policies |
-| [Error Handling](./docs/error_handling.md) | The Result pattern and Error codes reference |
-| [Observability](./docs/observability.md) | Lifecycle hooks, metrics, and OTel integration |
-| [Integrations](./docs/README.md#integrations) | React Query, SWR, and Backend patterns |
+| [Getting Started](./packages/pureq/docs/getting_started.md) | Installation and your first request |
+| [Core Concepts](./packages/pureq/docs/core_concepts.md) | Immutability, the Onion Model, and Path Typing |
+| [Middleware Reference](./packages/pureq/docs/middleware_reference.md) | Detailed guide for all reliability policies |
+| [Error Handling](./packages/pureq/docs/error_handling.md) | The Result pattern and Error codes reference |
+| [Observability](./packages/pureq/docs/observability.md) | Lifecycle hooks, metrics, and OTel integration |
+| [Integrations](./packages/pureq/docs/README.md#integrations) | React Query, SWR, and Backend patterns |
 
 ## Installation
 
