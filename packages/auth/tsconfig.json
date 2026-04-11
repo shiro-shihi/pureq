@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@pureq/pureq": ["../pureq/src"],
+      "@pureq/pureq/*": ["../pureq/src/*"]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../pureq" }
+  ]
+}

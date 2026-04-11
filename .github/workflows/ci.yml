@@ -15,29 +15,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
 
       - name: Install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck all packages
+        run: pnpm typecheck
 
       - name: Unit tests
-        run: npm run test:unit
+        run: pnpm test:unit
 
       - name: Integration tests
-        run: npm run test:integration
+        run: pnpm test:integration
 
       - name: Contract tests
-        run: npm run test:contract
+        run: pnpm test:contract
 
       - name: Stress tests
-        run: npm run test:stress
-
-      - name: Typecheck
-        run: npm run typecheck
+        run: pnpm test:stress
 
       - name: Build
         run: npm run build

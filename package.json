@@ -1,72 +1,31 @@
 {
-  "name": "@pureq/pureq",
-  "version": "1.1.6",
-  "description": "Functional, immutable, and type-safe HTTP client layer with middleware composition.",
-  "main": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js",
-      "default": "./dist/src/index.js"
-    },
-    "./node": {
-      "types": "./dist/src/node/index.d.ts",
-      "import": "./dist/src/node/index.js",
-      "default": "./dist/src/node/index.js"
-    }
-  },
-  "files": [
-    "dist"
-  ],
-  "directories": {
-    "doc": "docs"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "benchmark": "tsx ./scripts/benchmark.ts",
-    "test:browser": "vitest run tests/browser-runtime.smoke.test.ts --environment jsdom",
-    "test:edge": "esbuild scripts/edge-smoke-entry.ts --bundle --format=iife --platform=browser --outfile=.tmp/edge-smoke.bundle.js && node ./scripts/run-edge-smoke.mjs",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:unit": "vitest run tests --exclude tests/*.integration.test.ts --exclude tests/*.contract.test.ts --exclude tests/*.stress.test.ts --exclude tests/traffic-load.test.ts --exclude tests/resilience-shock.test.ts --exclude tests/chaos-heavy.test.ts --exclude tests/invariant-fuzz.test.ts",
-    "test:integration": "vitest run tests/client.integration.test.ts",
-    "test:contract": "vitest run tests/public-api.contract.test.ts",
-    "test:stress": "vitest run tests/retry.stress.test.ts",
-    "test:heavy": "vitest run tests/traffic-load.test.ts tests/resilience-shock.test.ts tests/retry.stress.test.ts tests/chaos-heavy.test.ts tests/invariant-fuzz.test.ts",
-    "test:nightly": "npm run test:heavy",
-    "test:ci": "npm run test:unit && npm run test:integration && npm run test:contract && npm run test:stress && npm run typecheck",
-    "test:ci:full": "npm run test:ci && npm run test:heavy"
-  },
-  "keywords": [
-    "http",
-    "fetch",
-    "client",
-    "middleware",
-    "retry",
-    "circuit-breaker",
-    "typescript",
-    "security"
-  ],
-  "author": "shiro-shihi",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/shiro-shihi/pureq.git"
-  },
-  "bugs": {
-    "url": "https://github.com/shiro-shihi/pureq/issues"
-  },
-  "homepage": "https://github.com/shiro-shihi/pureq#readme",
+  "name": "pureq-monorepo",
+  "version": "0.0.0",
+  "description": "pureq - A policy-first HTTP transport layer for TypeScript",
+  "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "build:pureq": "pnpm --filter @pureq/pureq build",
+    "build:auth": "pnpm --filter @pureq/auth build",
+    "typecheck": "pnpm --recursive run typecheck",
+    "test": "pnpm --recursive run test",
+    "test:unit": "pnpm --recursive run test:unit",
+    "test:integration": "pnpm --recursive run test:integration",
+    "test:contract": "pnpm --recursive run test:contract",
+    "test:stress": "pnpm --recursive run test:stress",
+    "test:ci": "pnpm --recursive run test:ci",
+    "test:ci:full": "pnpm --recursive run test:ci:full",
+    "test:browser": "pnpm --filter @pureq/pureq run test:browser",
+    "test:edge": "pnpm --filter @pureq/pureq run test:edge",
+    "benchmark": "pnpm --filter @pureq/pureq run benchmark",
+    "lint": "pnpm --recursive run lint",
+    "clean": "pnpm --recursive run clean && pnpm -r exec rm -rf dist node_modules"
+  },
   "devDependencies": {
-    "@edge-runtime/vm": "^5.0.0",
-    "@types/node": "^24.5.2",
-    "esbuild": "^0.25.11",
-    "jsdom": "^27.0.0",
-    "tsx": "^4.20.6",
-    "typescript": "^6.0.2",
-    "vitest": "^3.2.4"
+    "pnpm": "^10.33.0"
   }
 }

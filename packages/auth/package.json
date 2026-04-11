@@ -1,0 +1,69 @@
+{
+  "name": "@pureq/auth",
+  "version": "0.1.0",
+  "description": "Authentication and token management middleware for pureq",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./jwt": {
+      "types": "./dist/jwt/index.d.ts",
+      "import": "./dist/jwt/index.js",
+      "default": "./dist/jwt/index.js"
+    },
+    "./oidc": {
+      "types": "./dist/oidc/index.d.ts",
+      "import": "./dist/oidc/index.js",
+      "default": "./dist/oidc/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests --exclude tests/*.integration.test.ts",
+    "test:integration": "vitest run tests/*.integration.test.ts",
+    "test:ci": "npm run test:unit && npm run typecheck"
+  },
+  "keywords": [
+    "http",
+    "fetch",
+    "auth",
+    "token",
+    "jwt",
+    "oauth",
+    "oidc",
+    "middleware",
+    "typescript"
+  ],
+  "author": "shiro-shihi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiro-shihi/pureq.git",
+    "directory": "packages/auth"
+  },
+  "peerDependencies": {
+    "@pureq/pureq": "^1.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@pureq/pureq": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@pureq/pureq": "workspace:*",
+    "@types/node": "^24.5.2",
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  }
+}
