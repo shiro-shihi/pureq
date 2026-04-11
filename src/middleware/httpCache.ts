@@ -69,6 +69,8 @@ export function httpCache(options: HttpCacheOptions): Middleware {
           ageMs: policy.ageMs,
           ttlMs: options.ttlMs,
         });
+        cache.delete(key);
+        cache.set(key, cached);
         return cached.response.clone();
       }
     }
@@ -95,6 +97,7 @@ export function httpCache(options: HttpCacheOptions): Middleware {
           reason: "etag matched",
           key,
         });
+        cache.delete(key);
         cache.set(key, {
           ...cached,
           storedAt: Date.now(),
@@ -114,6 +117,7 @@ export function httpCache(options: HttpCacheOptions): Middleware {
           }
         }
 
+        cache.delete(key);
         cache.set(key, {
           response: response.clone(),
           storedAt: Date.now(),

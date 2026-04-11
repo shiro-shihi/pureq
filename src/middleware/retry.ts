@@ -131,12 +131,14 @@ export function retry(options: RetryOptions): Middleware {
 
     const hasBudget = retryBudgetMs !== undefined && Number.isFinite(retryBudgetMs) && retryBudgetMs > 0;
 
-    const withRetryMeta = () => {
-      const mutableReq = req as RequestConfig & { meta?: Record<string, unknown> };
-      const currentMeta = (mutableReq.meta ??= {});
-      currentMeta.retryCount = attempts;
-
-      return mutableReq;
+    const withRetryMeta = (r: RequestConfig): RequestConfig => {
+      return {
+        ...r,
+        meta: {
+          ...(r.meta ?? {}),
+          retryCount: attempts,
+        },
+      };
     };
 
     const executeWithRetry = async (): Promise<HttpResponse> => {
@@ -144,7 +146,7 @@ export function retry(options: RetryOptions): Middleware {
       const isMethodSafe = retryableMethods.has(method);
 
       try {
-        const res = await next(withRetryMeta());
+        const res = await next(withRetryMeta(req));
 
         if (isRetryableStatus(res.status, retryOnStatus) && attempts < maxRetries) {
           if (!isMethodSafe) {

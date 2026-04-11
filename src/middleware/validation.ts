@@ -17,6 +17,11 @@ export interface ValidationOptions<T> {
    * Useful for soft-fail or logging-only scenarios.
    */
   readonly silent?: boolean;
+  /**
+   * If true, validation is performed even for non-OK (4xx, 5xx) responses.
+   * Default: false.
+   */
+  readonly validateError?: boolean;
 }
 
 /**
@@ -29,7 +34,7 @@ export function validation<T = unknown>(options: ValidationOptions<T>): Middlewa
     let parsedBody: unknown = null;
 
     // Skip validation for non-OK responses unless explicitly requested
-    if (!response.ok) {
+    if (!response.ok && !options.validateError) {
         return response;
     }
 
