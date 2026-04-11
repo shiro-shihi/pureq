@@ -385,6 +385,15 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
     }
 
     const latencyMs = Date.now() - startedAt;
+    const retryCountFromResponse =
+      typeof (response as { __pureqRetryCount?: unknown }).__pureqRetryCount === "number"
+        ? ((response as { __pureqRetryCount?: number }).__pureqRetryCount as number)
+        : undefined;
+    const retryCountFromRequestMeta =
+      typeof (transformedReq.meta as any)?.retryCount === "number"
+        ? (transformedReq.meta as any).retryCount
+        : 0;
+
     baseOptions.hooks?.onRequestSuccess?.({
       phase: "success",
       at: Date.now(),
@@ -395,10 +404,7 @@ export function createClient(baseOptions: ClientOptions = {}): PureqClient {
       latencyMs,
       durationMs: latencyMs,
       status: response.status,
-      retryCount:
-        typeof (transformedReq.meta as any)?.retryCount === "number"
-          ? (transformedReq.meta as any).retryCount
-          : 0,
+      retryCount: retryCountFromResponse ?? retryCountFromRequestMeta,
     });
 
     return response;

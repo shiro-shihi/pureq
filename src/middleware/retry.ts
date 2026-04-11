@@ -37,6 +37,10 @@ export interface RetryOptions {
   }) => void;
 }
 
+function setResponseRetryCount(response: HttpResponse, count: number): void {
+  (response as HttpResponse & { __pureqRetryCount?: number }).__pureqRetryCount = count;
+}
+
 function isRetryableStatus(status: number, allowList?: readonly number[]): boolean {
   if (allowList && allowList.length > 0) {
     return allowList.includes(status);
@@ -150,6 +154,7 @@ export function retry(options: RetryOptions): Middleware {
 
         if (isRetryableStatus(res.status, retryOnStatus) && attempts < maxRetries) {
           if (!isMethodSafe) {
+            setResponseRetryCount(res, attempts);
             appendPolicyTrace(req, {
               policy: "retry",
               decision: "skip",
@@ -174,6 +179,7 @@ export function retry(options: RetryOptions): Middleware {
           const budgetRemainingMs = hasBudget ? Math.max(0, retryBudgetMs - totalWaitMs) : undefined;
 
           if (budgetRemainingMs !== undefined && waitTime > budgetRemainingMs) {
+            setResponseRetryCount(res, attempts - 1);
             appendPolicyTrace(req, {
               policy: "retry",
               decision: "skip",
@@ -214,6 +220,7 @@ export function retry(options: RetryOptions): Middleware {
           return executeWithRetry();
         }
 
+        setResponseRetryCount(res, attempts);
         return res;
       } catch (error) {
         if (!retryOnNetworkError) {
