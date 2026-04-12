@@ -71,6 +71,9 @@ jobs:
           generate_release_notes: true
 
       - name: Publish ${{ steps.package.outputs.name }} to npm
-        run: pnpm --filter "@pureq/${{ steps.package.outputs.name }}" publish --no-git-checks --access public
+        shell: bash
+        run: |
+          cd "packages/${{ steps.package.outputs.name }}"
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
