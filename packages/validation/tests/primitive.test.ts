@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VALIDATION_ERROR_CODES } from "../src/errors/validation-error";
+import { parseWithOptions } from "../src/schema/base";
 import { v } from "../src/schema/factory";
 import { DEFAULT_VALIDATION_POLICY } from "../src/policy/merge";
 
@@ -66,7 +67,6 @@ describe("primitive schemas", () => {
       expect(failure.error.code).toBe(VALIDATION_ERROR_CODES.INVALID_FORMAT);
       expect(failure.error.details).toEqual({
         format: "email",
-        value: "not-email",
       });
     }
   });
@@ -105,6 +105,30 @@ describe("primitive schemas", () => {
         onDenied: "error",
       });
       expect(result.value.policyMap["/email"]).toEqual(result.value.metadata);
+    }
+  });
+
+  it("includes invalid format value only when allowValueInErrors is enabled", () => {
+    const schema = v.string().email();
+
+    const hidden = schema.parse("not-email", "/email");
+    expect(hidden.ok).toBe(false);
+    if (!hidden.ok) {
+      expect(hidden.error.details).toEqual({
+        format: "email",
+      });
+    }
+
+    const verbose = parseWithOptions(schema, "not-email", "/email", {
+      allowValueInErrors: true,
+    });
+
+    expect(verbose.ok).toBe(false);
+    if (!verbose.ok) {
+      expect(verbose.error.details).toEqual({
+        format: "email",
+        value: "not-email",
+      });
     }
   });
 });

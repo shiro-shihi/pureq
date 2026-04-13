@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { Infer } from "../src/schema/base";
+import { parseWithOptions } from "../src/schema/base";
 import { VALIDATION_ERROR_CODES } from "../src/errors/validation-error";
 import { v } from "../src/schema/factory";
 
@@ -127,6 +128,54 @@ describe("composite schemas", () => {
     if (second.ok) {
       expect(second.value.metadata.scope).toEqual(["internal"]);
       expect(second.value.policyMap["/"].scope).toEqual(["internal"]);
+    }
+  });
+
+  it("returns cyclic_reference for self-referential inputs", () => {
+    const schema = v.object({
+      node: v.object({
+        value: v.string(),
+      }),
+    });
+
+    const source: Record<string, unknown> = Object.create(null);
+    source.node = source;
+
+    const result = schema.parse(source);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(VALIDATION_ERROR_CODES.CYCLIC_REFERENCE);
+      expect(result.error.path).toBe("/node");
+    }
+  });
+
+  it("returns max_depth_exceeded when nested input exceeds configured limit", () => {
+    const schema = v.object({
+      child: v.object({
+        child: v.object({
+          value: v.string(),
+        }),
+      }),
+    });
+
+    const result = parseWithOptions(
+      schema,
+      {
+        child: {
+          child: {
+            value: "ok",
+          },
+        },
+      },
+      "/",
+      { maxDepth: 2 },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(VALIDATION_ERROR_CODES.MAX_DEPTH_EXCEEDED);
+      expect(result.error.path).toBe("/child/child");
     }
   });
 });

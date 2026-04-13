@@ -8,7 +8,7 @@ import {
 } from "../../policy/merge.js";
 import type { ValidationPolicy } from "../../policy/types.js";
 import { err, ok } from "../../result/result.js";
-import type { ParseResult, PolicySchema } from "../base.js";
+import type { ParseResult, ParseRuntimeContext, PolicySchema } from "../base.js";
 
 const describeValueType = (input: unknown): string => {
   if (input === null) {
@@ -32,7 +32,7 @@ export class BooleanSchema implements PolicySchema<boolean> {
     return new BooleanSchema(mergeValidationPolicy(this.metadata, metadata));
   }
 
-  parse(input: unknown, path = "/"): ParseResult<boolean> {
+  parse(input: unknown, path = "/", _context?: ParseRuntimeContext): ParseResult<boolean> {
     const pointerPath = normalizePathToJsonPointer(path);
 
     if (typeof input !== "boolean") {

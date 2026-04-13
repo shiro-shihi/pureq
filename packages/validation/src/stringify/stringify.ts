@@ -1,6 +1,6 @@
 import { createValidationError, VALIDATION_ERROR_CODES, type ValidationError } from "../errors/validation-error.js";
 import { isErr, ok, type Result, err } from "../result/result.js";
-import { type ParseResult, type PolicySchema } from "../schema/base.js";
+import { parseWithOptions, type ParseResult, type PolicySchema } from "../schema/base.js";
 import { type StringifyOptions } from "./types.js";
 
 type RenderResult =
@@ -154,7 +154,12 @@ export const stringify = <T>(
   options: StringifyOptions = {},
 ): Result<string, ValidationError> => {
   try {
-    const parsed = schema.parse(data);
+    const parseOptions = {
+      allowValueInErrors: false,
+      ...(options.maxDepth !== undefined ? { maxDepth: options.maxDepth } : {}),
+    };
+
+    const parsed = parseWithOptions(schema, data, "/", parseOptions);
     return stringifyParsedValue(parsed, options.scope);
   } catch (cause) {
     return err(

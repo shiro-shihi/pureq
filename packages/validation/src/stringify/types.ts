@@ -12,4 +12,5 @@ export type DeniedDrop<T, Depth extends number = 6> = Depth extends 0
 
 export type StringifyOptions = {
   scope?: readonly string[];
+  maxDepth?: number;
 };

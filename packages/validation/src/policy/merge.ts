@@ -1,5 +1,21 @@
 import type { ValidationPolicy } from "./types.js";
 
+const FORBIDDEN_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+const sanitizeRecord = (source: Record<string, unknown>): Record<string, unknown> => {
+  const safe: Record<string, unknown> = Object.create(null);
+
+  for (const [key, value] of Object.entries(source)) {
+    if (FORBIDDEN_OBJECT_KEYS.has(key)) {
+      continue;
+    }
+
+    safe[key] = value;
+  }
+
+  return safe;
+};
+
 export const DEFAULT_VALIDATION_POLICY: Required<ValidationPolicy> = {
   redact: "none",
   pii: false,
@@ -17,7 +33,7 @@ const cloneGuardrails = (
 ): NonNullable<ValidationPolicy["guardrails"]> => {
   return guardrails.map((rule) => ({
     ...rule,
-    ...(rule.params ? { params: { ...rule.params } } : {}),
+    ...(rule.params ? { params: sanitizeRecord(rule.params) } : {}),
   }));
 };
 

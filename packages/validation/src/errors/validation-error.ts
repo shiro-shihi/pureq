@@ -2,10 +2,13 @@ export const VALIDATION_ERROR_CODES = {
   INVALID_TYPE: "invalid_type",
   INVALID_FORMAT: "invalid_format",
   FORBIDDEN_KEY: "forbidden_key",
+  MAX_DEPTH_EXCEEDED: "max_depth_exceeded",
+  CYCLIC_REFERENCE: "cyclic_reference",
   OUT_OF_RANGE: "out_of_range",
   REQUIRED: "required",
   FORBIDDEN_SCOPE: "forbidden_scope",
   GUARDRAIL_FAILED: "guardrail_failed",
+  GUARD_TIMEOUT: "guard_timeout",
   INTERNAL_GUARD_EXCEPTION: "internal_guard_exception",
 } as const;
 
@@ -53,7 +56,8 @@ export const invalidTypeError = (params: {
 export const invalidFormatError = (params: {
   path: string;
   format: string;
-  value: string;
+  value?: string;
+  includeValue?: boolean;
 }): ValidationError =>
   createValidationError({
     code: VALIDATION_ERROR_CODES.INVALID_FORMAT,
@@ -61,7 +65,7 @@ export const invalidFormatError = (params: {
     path: params.path,
     details: {
       format: params.format,
-      value: params.value,
+      ...(params.includeValue && params.value !== undefined ? { value: params.value } : {}),
     },
   });
 
@@ -82,5 +86,39 @@ export const forbiddenKeyError = (params: {
     path: params.path,
     details: {
       key: params.key,
+    },
+  });
+
+export const maxDepthExceededError = (params: {
+  path: string;
+  maxDepth: number;
+}): ValidationError =>
+  createValidationError({
+    code: VALIDATION_ERROR_CODES.MAX_DEPTH_EXCEEDED,
+    message: `Maximum parse depth ${params.maxDepth} exceeded`,
+    path: params.path,
+    details: {
+      maxDepth: params.maxDepth,
+    },
+  });
+
+export const cyclicReferenceError = (path: string): ValidationError =>
+  createValidationError({
+    code: VALIDATION_ERROR_CODES.CYCLIC_REFERENCE,
+    message: "Cyclic reference detected in input",
+    path,
+  });
+
+export const guardTimeoutError = (params: {
+  name: string;
+  timeoutMs: number;
+}): ValidationError =>
+  createValidationError({
+    code: VALIDATION_ERROR_CODES.GUARD_TIMEOUT,
+    message: `Guard "${params.name}" timed out after ${params.timeoutMs}ms`,
+    path: "/",
+    details: {
+      guard: params.name,
+      timeoutMs: params.timeoutMs,
     },
   });

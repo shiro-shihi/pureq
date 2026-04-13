@@ -26,6 +26,7 @@ import { v, stringify, ok, err, pipe, pipeAsync } from "@pureq/validation";
 - `ValidationPolicy` describes redaction, scope, and guardrail metadata.
 - `ValidationResult<T>` contains `data`, `metadata`, and `policyMap` on success.
 - `PolicySchema<T>` is the schema contract shared by all schema builders.
+- `ParseOptions` provides runtime controls such as `maxDepth` and `allowValueInErrors`.
 
 ## Schema Builders
 
@@ -39,6 +40,7 @@ import { v, stringify, ok, err, pipe, pipeAsync } from "@pureq/validation";
 ## Guards
 
 - `v.guard(fn, name?)` wraps a validation function and normalizes the result.
+- `v.guard(fn, { name, timeoutMs, signal })` enables timeout and cancellation-aware async guards.
 - Boolean guards return the original value on `true` and a `ValidationError` on `false`.
 - Async guards return a promise that resolves to the same contract.
 
@@ -46,6 +48,13 @@ import { v, stringify, ok, err, pipe, pipeAsync } from "@pureq/validation";
 
 - `stringify(data, schema, options?)` renders policy-aware output.
 - `options.scope` controls access checks for scoped fields.
+- `options.maxDepth` caps nested parse depth during stringify.
+
+## Parse Runtime Controls
+
+- `parseWithOptions(schema, input, path?, options?)` executes parse with runtime safety controls.
+- `options.maxDepth` defaults to `20` to mitigate deep-nesting DoS risks.
+- `options.allowValueInErrors` defaults to `false` and hides raw input values from format errors unless explicitly enabled.
 
 ## Utility Types
 

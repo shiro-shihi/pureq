@@ -96,6 +96,26 @@ describe("Issue 10: Guardrail Chain and Pipe Integration", () => {
         expect(resolved.error.cause).toBe("Async error");
       }
     });
+
+    it("should timeout async guard execution when timeoutMs is exceeded", async () => {
+      const timeoutGuard = v.guard(
+        async () => new Promise<boolean>((resolve) => {
+          setTimeout(() => resolve(true), 50);
+        }),
+        { name: "slow-guard", timeoutMs: 10 },
+      );
+
+      const result = timeoutGuard("test");
+      if (!(result instanceof Promise)) {
+        throw new Error("Expected Promise from async guard");
+      }
+
+      const resolved = await result;
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) {
+        expect(resolved.error.code).toBe(VALIDATION_ERROR_CODES.GUARD_TIMEOUT);
+      }
+    });
   });
 
   describe("pipe integration - chain order", () => {

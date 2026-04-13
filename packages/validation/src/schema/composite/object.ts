@@ -1,4 +1,9 @@
-import { forbiddenKeyError, invalidTypeError } from "../../errors/validation-error.js";
+import {
+  cyclicReferenceError,
+  forbiddenKeyError,
+  invalidTypeError,
+  maxDepthExceededError,
+} from "../../errors/validation-error.js";
 import { decodeJsonPointer, encodeJsonPointer, normalizePathToJsonPointer } from "../../policy/json-pointer.js";
 import {
   DEFAULT_VALIDATION_POLICY,
@@ -8,7 +13,14 @@ import {
 } from "../../policy/merge.js";
 import type { ValidationPolicy } from "../../policy/types.js";
 import { err, isErr, ok } from "../../result/result.js";
-import type { Infer, ParseResult, PolicySchema } from "../base.js";
+import {
+  createChildParseRuntimeContext,
+  createParseRuntimeContext,
+  type Infer,
+  type ParseResult,
+  type ParseRuntimeContext,
+  type PolicySchema,
+} from "../base.js";
 
 type ObjectShape = Record<string, PolicySchema<unknown>>;
 
@@ -43,8 +55,18 @@ export class ObjectSchema<TShape extends ObjectShape> implements PolicySchema<In
     return new ObjectSchema(this.shape, mergeValidationPolicy(this.metadata, metadata));
   }
 
-  parse(input: unknown, path = "/"): ParseResult<InferShape<TShape>> {
+  parse(input: unknown, path = "/", context?: ParseRuntimeContext): ParseResult<InferShape<TShape>> {
     const pointerPath = normalizePathToJsonPointer(path);
+    const runtimeContext = createParseRuntimeContext(context);
+
+    if (runtimeContext.depth >= runtimeContext.maxDepth) {
+      return err(
+        maxDepthExceededError({
+          path: pointerPath,
+          maxDepth: runtimeContext.maxDepth,
+        }),
+      );
+    }
 
     if (typeof input !== "object" || input === null || Array.isArray(input)) {
       return err(
@@ -62,29 +84,40 @@ export class ObjectSchema<TShape extends ObjectShape> implements PolicySchema<In
     };
 
     const source = input as Record<string, unknown>;
+
+    if (runtimeContext.seen.has(source)) {
+      return err(cyclicReferenceError(pointerPath));
+    }
+
+    runtimeContext.seen.add(source);
     const parentTokens = decodeJsonPointer(pointerPath);
+    const childContext = createChildParseRuntimeContext(runtimeContext);
 
     const entries = Object.entries(this.shape) as [keyof TShape & string, TShape[keyof TShape]][];
 
-    for (const [key, schema] of entries) {
-      if (FORBIDDEN_OBJECT_KEYS.has(key)) {
-        return err(
-          forbiddenKeyError({
-            path: encodeJsonPointer([...parentTokens, key]),
-            key,
-          }),
-        );
+    try {
+      for (const [key, schema] of entries) {
+        if (FORBIDDEN_OBJECT_KEYS.has(key)) {
+          return err(
+            forbiddenKeyError({
+              path: encodeJsonPointer([...parentTokens, key]),
+              key,
+            }),
+          );
+        }
+
+        const childPath = encodeJsonPointer([...parentTokens, key]);
+        const parsed = schema.parse(source[key], childPath, childContext);
+
+        if (isErr(parsed)) {
+          return parsed;
+        }
+
+        output[key] = parsed.value.data;
+        Object.assign(policyMap, parsed.value.policyMap);
       }
-
-      const childPath = encodeJsonPointer([...parentTokens, key]);
-      const parsed = schema.parse(source[key], childPath);
-
-      if (isErr(parsed)) {
-        return parsed;
-      }
-
-      output[key] = parsed.value.data;
-      Object.assign(policyMap, parsed.value.policyMap);
+    } finally {
+      runtimeContext.seen.delete(source);
     }
 
     return ok({

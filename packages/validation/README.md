@@ -245,6 +245,7 @@ const output = stringify(
 ### Guards
 
 - `v.guard(fn, name?)` normalizes boolean, `Result`, and async guard functions.
+- `v.guard(fn, { name, timeoutMs })` adds timeout control for async guards.
 - `pipe(initial, ...steps)` chains synchronous validation steps.
 - `pipeAsync(initial, ...steps)` chains synchronous or asynchronous steps.
 
@@ -252,6 +253,13 @@ const output = stringify(
 
 - `stringify(data, schema, options?)` renders a policy-aware string.
 - `options.scope` controls access checks for scoped fields.
+- `options.maxDepth` limits nested parse depth during stringify.
+
+### Parse Runtime Controls
+
+- `parseWithOptions(schema, input, path?, options?)` applies runtime controls.
+- `options.maxDepth` defaults to `20` and prevents deep-nesting DoS risks.
+- `options.allowValueInErrors` defaults to `false` so input values are not included in format errors unless explicitly enabled.
 
 ## Redaction and Access Control
 

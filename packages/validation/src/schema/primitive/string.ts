@@ -8,7 +8,7 @@ import {
 } from "../../policy/merge.js";
 import { normalizePathToJsonPointer } from "../../policy/json-pointer.js";
 import type { ValidationPolicy } from "../../policy/types.js";
-import type { ParseResult, PolicySchema } from "../base.js";
+import type { ParseResult, ParseRuntimeContext, PolicySchema } from "../base.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -66,7 +66,7 @@ export class StringSchema implements PolicySchema<string> {
     return new StringSchema(this.validators, mergeValidationPolicy(this.metadata, metadata));
   }
 
-  parse(input: unknown, path = "/"): ParseResult<string> {
+  parse(input: unknown, path = "/", context?: ParseRuntimeContext): ParseResult<string> {
     const pointerPath = normalizePathToJsonPointer(path);
 
     if (typeof input !== "string") {
@@ -86,6 +86,7 @@ export class StringSchema implements PolicySchema<string> {
             path: pointerPath,
             format: validator.name,
             value: input,
+            includeValue: Boolean(context?.options.allowValueInErrors),
           }),
         );
       }

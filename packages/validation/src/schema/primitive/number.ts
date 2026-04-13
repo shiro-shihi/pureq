@@ -8,7 +8,7 @@ import {
 } from "../../policy/merge.js";
 import type { ValidationPolicy } from "../../policy/types.js";
 import { err, ok } from "../../result/result.js";
-import type { ParseResult, PolicySchema } from "../base.js";
+import type { ParseResult, ParseRuntimeContext, PolicySchema } from "../base.js";
 
 const describeValueType = (input: unknown): string => {
   if (input === null) {
@@ -32,7 +32,7 @@ export class NumberSchema implements PolicySchema<number> {
     return new NumberSchema(mergeValidationPolicy(this.metadata, metadata));
   }
 
-  parse(input: unknown, path = "/"): ParseResult<number> {
+  parse(input: unknown, path = "/", _context?: ParseRuntimeContext): ParseResult<number> {
     const pointerPath = normalizePathToJsonPointer(path);
 
     if (typeof input !== "number" || Number.isNaN(input)) {

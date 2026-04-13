@@ -121,4 +121,32 @@ describe("stringify", () => {
       expect(result.error.path).toBe("/__proto__");
     }
   });
+
+  it("returns max_depth_exceeded when stringify input exceeds configured maxDepth", () => {
+    const schema = v.object({
+      child: v.object({
+        child: v.object({
+          value: v.string(),
+        }),
+      }),
+    });
+
+    const result = stringify(
+      {
+        child: {
+          child: {
+            value: "ok",
+          },
+        },
+      },
+      schema,
+      { maxDepth: 2 },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(VALIDATION_ERROR_CODES.MAX_DEPTH_EXCEEDED);
+      expect(result.error.path).toBe("/child/child");
+    }
+  });
 });

@@ -42,6 +42,20 @@ const asyncChecked = await pipeAsync(ok(42), positive, even);
 
 `pipeAsync(...)` handles mixed sync and async steps in a stable order.
 
+### Timeout control for async guards
+
+```ts
+const dbGuard = v.guard(
+  async (value: string) => {
+    // external check
+    return value.length > 0;
+  },
+  { name: "db-check", timeoutMs: 200 },
+);
+```
+
+When the timeout is exceeded, the guard returns a `GUARD_TIMEOUT` error.
+
 ## Failure Behavior
 
 - Guards execute in the order they are passed.
