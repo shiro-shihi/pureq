@@ -37,6 +37,7 @@ const user = await api.getJson<User>("/users/:id", { params: { id: "42" } });
 - [Error Handling](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/error_handling.md)
 - [Observability](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/observability.md)
 - [Migration Guide](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/migration_guide.md)
+- [JsonResult API Reference & Migration](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/json_result_reference_and_migration.md)
 - [Benchmarks](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/benchmarks.md)
 
 ## License

@@ -20,7 +20,7 @@ This guide provides a comprehensive path for migrating from `fetch` or `axios` t
 ### fetch to pureq
 
 | Existing pattern | pureq target |
-|---|---|
+| --- | --- |
 | direct fetch per call | shared `createClient` |
 | custom retry loops | `retry` middleware |
 | ad-hoc dedupe logic | `dedupe` middleware |
@@ -30,7 +30,7 @@ This guide provides a comprehensive path for migrating from `fetch` or `axios` t
 ### axios to pureq
 
 | Existing pattern | pureq target |
-|---|---|
+| --- | --- |
 | `axios.create` mutable instance | immutable `createClient` chain |
 | request/response interceptors | pureq interceptors |
 | adapter overrides | `adapter` boundary |
@@ -44,6 +44,7 @@ This guide provides a comprehensive path for migrating from `fetch` or `axios` t
 ### Fetch -> pureq
 
 **Before:**
+
 ```ts
 const res = await fetch(`https://api.example.com/users/${id}`, {
   headers: { Authorization: `Bearer ${token}` },
@@ -57,6 +58,7 @@ const user = await res.json() as { id: string; name: string };
 ```
 
 **After:**
+
 ```ts
 import { createClient } from "pureq";
 
@@ -72,6 +74,7 @@ const user = await client.getJson<{ id: string; name: string }>("/users/:id", {
 ```
 
 *Using the Non-throwing Result API:*
+
 ```ts
 const result = await client.getJsonResult<{ id: string; name: string }>("/users/:id", {
   params: { id },
@@ -88,6 +91,7 @@ console.log(result.data.name);
 ### Axios -> pureq
 
 **Before (Axios Instance Formulation):**
+
 ```ts
 import axios from "axios";
 
@@ -104,6 +108,7 @@ api.interceptors.request.use((req) => {
 ```
 
 **After (pureq Immutable Formulation):**
+
 ```ts
 import { createClient } from "pureq";
 

@@ -24,6 +24,7 @@ Welcome to the official documentation for **pureq**, the enterprise-grade transp
 ## Advance Topics
 
 - **[Migration Guide](./migration_guide.md)**: Moving from Axios or native Fetch.
+- **[JsonResult API Reference & Migration](./json_result_reference_and_migration.md)**: Quick method comparison and fetch-to-Result migration patterns.
 - **[Reliability Primitives](./reliability_primitives.md)**: The theory behind the library.
 - **[Runtime Compatibility Matrix](./runtime_compatibility_matrix.md)**: Support for Node, Bun, Deno, and Edge.
 - **[BFF & Backend Patterns](./templates_bff_backend.md)**: Best practices for server-side transport.
