@@ -54,7 +54,7 @@ export function err<E>(error: E): Err<E> {
 
 function extractRetryCount(cause: unknown): number | undefined {
   if (typeof cause === "object" && cause !== null && "__pureqRetryCount" in cause) {
-    const value = (cause as { __pureqRetryCount?: unknown }).__pureqRetryCount;
+    const value = cause.__pureqRetryCount;
     return typeof value === "number" ? value : undefined;
   }
   return undefined;
@@ -74,7 +74,7 @@ export function toPureqError(cause: unknown, metadata: PureqErrorMetadata = {}):
     (typeof cause === "object" &&
       cause !== null &&
       "name" in cause &&
-      (cause as { name?: unknown }).name === "TypeError");
+      cause.name === "TypeError");
   const looksLikeNetworkMessage = /network|fetch|socket|econn|enotfound|timed out/i.test(message);
   const retryCount =
     metadata.retryCount !== undefined ? metadata.retryCount : extractRetryCount(cause);
@@ -89,7 +89,7 @@ export function toPureqError(cause: unknown, metadata: PureqErrorMetadata = {}):
   // Explicit code from metadata takes precedence
   if (metadata.code) {
     return {
-      kind: (cause as any).kind ?? "unknown",
+      kind: (cause as { kind?: PureqErrorKind }).kind ?? "unknown",
       code: metadata.code,
       message,
       cause,
@@ -122,11 +122,12 @@ export function toPureqError(cause: unknown, metadata: PureqErrorMetadata = {}):
   }
 
   // Handle errors that already have a code property (e.g. from our new subsystems)
-  const anyCause = cause as any;
-  if (anyCause && typeof anyCause.code === "string") {
+  const maybePureqError = cause as PureqError
+  // check if cause is PureqError.
+  if (maybePureqError && typeof maybePureqError.code === "string") {
     return {
-      kind: anyCause.kind ?? "unknown",
-      code: anyCause.code,
+      kind: maybePureqError.kind ?? "unknown",
+      code: maybePureqError.code,
       message,
       cause,
       metadata: normalizedMetadata
