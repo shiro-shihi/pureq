@@ -13,7 +13,11 @@ If you only want the shortest path, jump to [Quick Start](#quick-start). If you 
 ## Install
 
 ```bash
+npm install @pureq/validation
+# or
 pnpm add @pureq/validation
+# or
+yarn add @pureq/validation
 ```
 
 ## At a Glance
