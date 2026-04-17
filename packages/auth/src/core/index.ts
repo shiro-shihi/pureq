@@ -3,6 +3,8 @@ import type {
   AuthBridgeRequestLike,
   AuthConfig,
   AuthInstance,
+  AuthPasskeyCredential,
+  AuthPasskeyChallengeFlow,
   AuthPersistedSession,
   AuthProvider,
   AuthRouteHandlers,
@@ -20,6 +22,55 @@ const REFRESH_TOKEN_PREFIX = "refresh:";
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 type RouteRequest = AuthBridgeRequestLike & { readonly method?: string; readonly url?: string; readonly body?: unknown };
+
+type PasskeyProvider = AuthProvider & {
+  issueChallenge(
+    flow: AuthPasskeyChallengeFlow,
+    userId?: string
+  ): Promise<{ readonly challengeId: string; readonly challenge: string }>;
+  consumeChallenge(challengeId: string, flow: AuthPasskeyChallengeFlow, userId?: string): Promise<string | null>;
+  createRegistrationOptions(params: {
+    readonly user: AuthUser;
+    readonly challenge: string;
+    readonly excludeCredentialIds: readonly string[];
+  }): Promise<Readonly<Record<string, unknown>>>;
+  verifyRegistration(params: {
+    readonly response: unknown;
+    readonly expectedChallenge: string;
+    readonly expectedOrigin: string;
+    readonly expectedRpId: string;
+    readonly user: AuthUser;
+  }): Promise<{
+    readonly verified: boolean;
+    readonly credential?: {
+      readonly credentialId: string;
+      readonly publicKey: string;
+      readonly counter: number;
+      readonly transports?: readonly string[];
+      readonly backedUp?: boolean;
+      readonly deviceType?: "singleDevice" | "multiDevice";
+      readonly aaguid?: string | null;
+    };
+  }>;
+  createAuthenticationOptions(params: {
+    readonly challenge: string;
+    readonly allowCredentialIds: readonly string[];
+  }): Promise<Readonly<Record<string, unknown>>>;
+  verifyAuthentication(params: {
+    readonly response: unknown;
+    readonly expectedChallenge: string;
+    readonly expectedOrigin: string;
+    readonly expectedRpId: string;
+    readonly authenticator: AuthPasskeyCredential;
+  }): Promise<{
+    readonly verified: boolean;
+    readonly credentialId?: string;
+    readonly newCounter?: number;
+    readonly userId?: string;
+  }>;
+  readonly rpId: string;
+  readonly expectedOrigin: string;
+};
 
 function toJsonResponse(body: unknown, status: number, headers?: Headers): Response {
   const responseHeaders = headers ?? new Headers();
@@ -80,10 +131,50 @@ function readString(record: Readonly<Record<string, unknown>>, key: string): str
 }
 
 function toProviderType(value: string | null): AuthAccount["type"] {
-  if (value === "oauth" || value === "oidc" || value === "credentials" || value === "email") {
+  if (value === "oauth" || value === "oidc" || value === "credentials" || value === "email" || value === "webauthn") {
     return value;
   }
   return "oidc";
+}
+
+function isPasskeyProvider(provider: AuthProvider): provider is PasskeyProvider {
+  return (
+    provider.type === "webauthn" &&
+    "issueChallenge" in provider &&
+    typeof provider.issueChallenge === "function" &&
+    "consumeChallenge" in provider &&
+    typeof provider.consumeChallenge === "function" &&
+    "createRegistrationOptions" in provider &&
+    typeof provider.createRegistrationOptions === "function" &&
+    "verifyRegistration" in provider &&
+    typeof provider.verifyRegistration === "function" &&
+    "createAuthenticationOptions" in provider &&
+    typeof provider.createAuthenticationOptions === "function" &&
+    "verifyAuthentication" in provider &&
+    typeof provider.verifyAuthentication === "function" &&
+    "rpId" in provider &&
+    typeof provider.rpId === "string" &&
+    "expectedOrigin" in provider &&
+    typeof provider.expectedOrigin === "string"
+  );
+}
+
+function readPasskeyBody(body: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const passkey = body.passkey;
+  if (passkey && typeof passkey === "object") {
+    return passkey as Readonly<Record<string, unknown>>;
+  }
+  return {};
+}
+
+function ensurePasskeyCredentialShape(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  const maybeRawId = typeof record.rawId === "string" ? record.rawId : null;
+  const maybeId = typeof record.id === "string" ? record.id : null;
+  return maybeRawId ?? maybeId;
 }
 
 function toSessionToken(accessToken: string | null): string | null {
@@ -196,6 +287,11 @@ async function ensureLinkedAccount(
   if (!existing) {
     await adapter.linkAccount(account);
     await config.callbacks?.linkAccount?.({ user, account });
+    return;
+  }
+
+  if (adapter.updateAccount) {
+    await adapter.updateAccount(account);
   }
 }
 
@@ -288,6 +384,449 @@ function createRouteHandlers(config: AuthConfig, instance: Pick<AuthInstance, "s
         });
 
         return toJsonResponse({ ok: true, provider: provider.id, email }, 200);
+      }
+
+      if (provider.type === "webauthn") {
+        if (!isPasskeyProvider(provider)) {
+          return toJsonResponse(
+            {
+              error: {
+                code: "PUREQ_AUTH_INVALID_PROVIDER",
+                message: "invalid passkey provider contract",
+              },
+            },
+            400
+          );
+        }
+
+        const adapter = config.adapter;
+        if (
+          !adapter ||
+          !adapter.createAuthenticator ||
+          !adapter.getAuthenticatorByCredentialId ||
+          !adapter.listAuthenticatorsByUserId ||
+          !adapter.updateAuthenticatorCounter
+        ) {
+          return toJsonResponse(
+            {
+              error: {
+                code: "PUREQ_AUTH_INVALID_PROVIDER",
+                message: "passkey provider requires adapter authenticator storage support",
+              },
+            },
+            400
+          );
+        }
+
+        const passkeyBody = readPasskeyBody(body);
+        const action = readString(passkeyBody, "action");
+        if (!action) {
+          return toJsonResponse(
+            {
+              error: {
+                code: "PUREQ_AUTH_INVALID_CREDENTIALS",
+                message: "passkey.action is required",
+              },
+            },
+            400
+          );
+        }
+
+        if (action === "register-options") {
+          const explicitUserId = readString(passkeyBody, "userId");
+          const email = readString(passkeyBody, "email");
+          const name = readString(passkeyBody, "name");
+
+          let user: AuthUser | null = null;
+          if (explicitUserId) {
+            user = await adapter.getUser(explicitUserId);
+          }
+          if (!user && email) {
+            user = await adapter.getUserByEmail(email);
+          }
+          if (!user) {
+            user = await adapter.createUser({
+              ...(email !== null ? { email } : {}),
+              ...(name !== null ? { name } : {}),
+            });
+            await config.callbacks?.createUser?.({ user });
+          }
+
+          const existingCredentials = await adapter.listAuthenticatorsByUserId(user.id);
+          const challenge = await provider.issueChallenge("registration", user.id);
+          const options = await provider.createRegistrationOptions({
+            challenge: challenge.challenge,
+            user,
+            excludeCredentialIds: existingCredentials.map((credential) => credential.credentialId),
+          });
+
+          return toJsonResponse(
+            {
+              ok: true,
+              provider: provider.id,
+              action,
+              user,
+              challengeId: challenge.challengeId,
+              options,
+            },
+            200
+          );
+        }
+
+        if (action === "register-verify") {
+          const challengeId = readString(passkeyBody, "challengeId");
+          const userId = readString(passkeyBody, "userId");
+          const credentialResponse = passkeyBody.response;
+
+          if (!challengeId || !userId || !credentialResponse) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_MISSING_TOKEN",
+                  message: "passkey registration verification requires challengeId, userId and response",
+                },
+              },
+              400
+            );
+          }
+
+          const expectedChallenge = await provider.consumeChallenge(challengeId, "registration", userId);
+          if (!expectedChallenge) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey registration challenge is invalid or expired",
+                },
+              },
+              401
+            );
+          }
+
+          const user = await adapter.getUser(userId);
+          if (!user) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_INVALID_CREDENTIALS",
+                  message: "unknown user for passkey registration",
+                },
+              },
+              400
+            );
+          }
+
+          const verification = await provider.verifyRegistration({
+            response: credentialResponse,
+            expectedChallenge,
+            expectedOrigin: provider.expectedOrigin,
+            expectedRpId: provider.rpId,
+            user,
+          });
+
+          const resultCredential = verification.credential;
+          if (!verification.verified || !resultCredential) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey registration verification failed",
+                },
+              },
+              401
+            );
+          }
+
+          if (!resultCredential.credentialId || !resultCredential.publicKey || resultCredential.counter < 0) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_INVALID_CREDENTIALS",
+                  message: "invalid passkey registration result",
+                },
+              },
+              400
+            );
+          }
+
+          const existing = await adapter.getAuthenticatorByCredentialId(resultCredential.credentialId);
+          if (existing && existing.userId !== user.id) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey credential already belongs to another user",
+                },
+              },
+              401
+            );
+          }
+
+          if (!existing) {
+            await adapter.createAuthenticator({
+              credentialId: resultCredential.credentialId,
+              userId: user.id,
+              publicKey: resultCredential.publicKey,
+              counter: resultCredential.counter,
+              ...(resultCredential.transports ? { transports: resultCredential.transports } : {}),
+              ...(resultCredential.backedUp !== undefined ? { backedUp: resultCredential.backedUp } : {}),
+              ...(resultCredential.deviceType ? { deviceType: resultCredential.deviceType } : {}),
+              ...(resultCredential.aaguid !== undefined ? { aaguid: resultCredential.aaguid } : {}),
+              createdAt: new Date(),
+              lastUsedAt: null,
+            });
+          }
+
+          const account: AuthAccount = {
+            userId: user.id,
+            type: "webauthn",
+            provider: provider.id,
+            providerAccountId: resultCredential.credentialId,
+          };
+
+          const allow = await config.callbacks?.signIn?.({ user, account });
+          if (allow === false) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "sign-in denied by callback",
+                },
+              },
+              401
+            );
+          }
+
+          await ensureLinkedAccount(config, user, account);
+          const { state, persisted } = await issueSession(config, instance, user.id);
+          const projectedSession = await config.callbacks?.session?.({
+            session: persisted,
+            user,
+            token: {
+              accessToken: state.accessToken,
+              refreshToken: state.refreshToken,
+            },
+          });
+
+          const responseHeaders = new Headers();
+          appendSetCookieHeaders(responseHeaders, bridge.buildSetCookieHeaders(state));
+
+          return toJsonResponse(
+            {
+              ok: true,
+              provider: provider.id,
+              action,
+              user,
+              session: projectedSession ?? persisted,
+              state,
+            },
+            200,
+            responseHeaders
+          );
+        }
+
+        if (action === "authenticate-options") {
+          const explicitUserId = readString(passkeyBody, "userId");
+          const email = readString(passkeyBody, "email");
+          let user: AuthUser | null = null;
+          if (explicitUserId) {
+            user = await adapter.getUser(explicitUserId);
+          }
+          if (!user && email) {
+            user = await adapter.getUserByEmail(email);
+          }
+
+          const allowCredentials = user ? await adapter.listAuthenticatorsByUserId(user.id) : [];
+          const challenge = await provider.issueChallenge("authentication", user?.id);
+          const options = await provider.createAuthenticationOptions({
+            challenge: challenge.challenge,
+            allowCredentialIds: allowCredentials.map((credential) => credential.credentialId),
+          });
+
+          return toJsonResponse(
+            {
+              ok: true,
+              provider: provider.id,
+              action,
+              ...(user ? { user: { id: user.id, email: user.email ?? null } } : {}),
+              challengeId: challenge.challengeId,
+              options,
+            },
+            200
+          );
+        }
+
+        if (action === "authenticate-verify") {
+          const challengeId = readString(passkeyBody, "challengeId");
+          const requestUserId = readString(passkeyBody, "userId");
+          const credentialResponse = passkeyBody.response;
+          if (!challengeId || !credentialResponse) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_MISSING_TOKEN",
+                  message: "passkey authentication verification requires challengeId and response",
+                },
+              },
+              400
+            );
+          }
+
+          const expectedChallenge = await provider.consumeChallenge(
+            challengeId,
+            "authentication",
+            requestUserId ?? undefined
+          );
+          if (!expectedChallenge) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey authentication challenge is invalid or expired",
+                },
+              },
+              401
+            );
+          }
+
+          const responseCredentialId = ensurePasskeyCredentialShape(credentialResponse);
+          if (!responseCredentialId) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_INVALID_CREDENTIALS",
+                  message: "passkey response must include a credential id",
+                },
+              },
+              400
+            );
+          }
+
+          const authenticator = await adapter.getAuthenticatorByCredentialId(responseCredentialId);
+          if (!authenticator) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "unknown passkey credential",
+                },
+              },
+              401
+            );
+          }
+
+          const verification = await provider.verifyAuthentication({
+            response: credentialResponse,
+            expectedChallenge,
+            expectedOrigin: provider.expectedOrigin,
+            expectedRpId: provider.rpId,
+            authenticator,
+          });
+
+          if (!verification.verified) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey authentication verification failed",
+                },
+              },
+              401
+            );
+          }
+
+          const nextCounter = verification.newCounter;
+          if (typeof nextCounter === "number") {
+            if (authenticator.counter > 0 && nextCounter <= authenticator.counter) {
+              return toJsonResponse(
+                {
+                  error: {
+                    code: "PUREQ_AUTH_UNAUTHORIZED",
+                    message: "passkey sign counter rollback detected",
+                  },
+                },
+                401
+              );
+            }
+
+            await adapter.updateAuthenticatorCounter({
+              credentialId: authenticator.credentialId,
+              counter: Math.max(nextCounter, authenticator.counter),
+              lastUsedAt: new Date(),
+            });
+          }
+
+          const userId = verification.userId ?? authenticator.userId;
+          const user = await adapter.getUser(userId);
+          if (!user) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "passkey user not found",
+                },
+              },
+              401
+            );
+          }
+
+          const account: AuthAccount = {
+            userId: user.id,
+            type: "webauthn",
+            provider: provider.id,
+            providerAccountId: authenticator.credentialId,
+          };
+
+          const allow = await config.callbacks?.signIn?.({ user, account });
+          if (allow === false) {
+            return toJsonResponse(
+              {
+                error: {
+                  code: "PUREQ_AUTH_UNAUTHORIZED",
+                  message: "sign-in denied by callback",
+                },
+              },
+              401
+            );
+          }
+
+          await ensureLinkedAccount(config, user, account);
+          const { state, persisted } = await issueSession(config, instance, user.id);
+          const projectedSession = await config.callbacks?.session?.({
+            session: persisted,
+            user,
+            token: {
+              accessToken: state.accessToken,
+              refreshToken: state.refreshToken,
+            },
+          });
+
+          const responseHeaders = new Headers();
+          appendSetCookieHeaders(responseHeaders, bridge.buildSetCookieHeaders(state));
+
+          return toJsonResponse(
+            {
+              ok: true,
+              provider: provider.id,
+              action,
+              user,
+              session: projectedSession ?? persisted,
+              state,
+            },
+            200,
+            responseHeaders
+          );
+        }
+
+        return toJsonResponse(
+          {
+            error: {
+              code: "PUREQ_AUTH_INVALID_CREDENTIALS",
+              message: "unsupported passkey action",
+            },
+          },
+          400
+        );
       }
 
       if (provider.type !== "credentials" || !("authorize" in provider) || typeof provider.authorize !== "function") {
