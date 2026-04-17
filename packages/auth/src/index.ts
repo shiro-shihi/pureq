@@ -138,6 +138,8 @@ export {
 	analyzeAuthMigration,
 	formatMigrationParityReport,
 	generateMigrationChecklists,
+	getAuthenticatorCredentialCollisionCheckQuery,
+	extractValidCredentialIds,
 } from "./migration/index.js";
 export {
 	createAuthSessionManager,

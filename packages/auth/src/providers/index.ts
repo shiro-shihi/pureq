@@ -172,13 +172,6 @@ export function passkeyProvider(options: AuthPasskeyProviderOptions): AuthProvid
     delete(challengeId) {
       pendingChallenges.delete(challengeId);
     },
-    cleanup(nowMs) {
-      for (const [challengeId, challenge] of pendingChallenges.entries()) {
-        if (challenge.expiresAt <= nowMs) {
-          pendingChallenges.delete(challengeId);
-        }
-      }
-    },
   };
 
   const challengeStore = options.challengeStore ?? inMemoryStore;

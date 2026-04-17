@@ -400,4 +400,110 @@ describe("core auth handlers", () => {
     await settleBroadcastTasks();
     auth.session.dispose();
   });
+
+  it("keeps credentials password flow stable when passkey provider is enabled", async () => {
+    const adapter = createInMemoryAdapter();
+    const auth = createAuth({
+      adapter,
+      providers: [
+        credentialsProvider({
+          authorize: async (credentials) => {
+            if (credentials.username === "alice" && credentials.password === "secret") {
+              return { id: "user-alice", email: "alice@example.com", name: "Alice" };
+            }
+            return null;
+          },
+        }),
+        passkeyProvider({
+          rpId: "app.example.com",
+          expectedOrigin: "https://app.example.com",
+          verifyRegistration: async ({ expectedChallenge }) => ({
+            verified: true,
+            credential: {
+              credentialId: "cred-passkey-coexist",
+              publicKey: `pk-${expectedChallenge}`,
+              counter: 1,
+            },
+          }),
+          verifyAuthentication: async () => ({
+            verified: true,
+            credentialId: "cred-passkey-coexist",
+            newCounter: 2,
+          }),
+        }),
+      ],
+    });
+
+    const credentialsSignIn = await auth.handlers.handleSignIn({
+      method: "POST",
+      headers: {},
+      body: {
+        provider: "credentials",
+        credentials: {
+          username: "alice",
+          password: "secret",
+        },
+      },
+    });
+    expect(credentialsSignIn.status).toBe(200);
+
+    const registerOptions = await auth.handlers.handleSignIn({
+      method: "POST",
+      headers: {},
+      body: {
+        provider: "passkey",
+        passkey: {
+          action: "register-options",
+          email: "alice@example.com",
+          name: "Alice",
+        },
+      },
+    });
+    expect(registerOptions.status).toBe(200);
+    const registerOptionsBody = await registerOptions.json();
+
+    const registerVerify = await auth.handlers.handleSignIn({
+      method: "POST",
+      headers: {},
+      body: {
+        provider: "passkey",
+        passkey: {
+          action: "register-verify",
+          challengeId: registerOptionsBody.challengeId,
+          userId: registerOptionsBody.user.id,
+          response: { id: "cred-passkey-coexist" },
+        },
+      },
+    });
+    expect(registerVerify.status).toBe(200);
+
+    const credentialsStillWork = await auth.handlers.handleSignIn({
+      method: "POST",
+      headers: {},
+      body: {
+        provider: "credentials",
+        credentials: {
+          username: "alice",
+          password: "secret",
+        },
+      },
+    });
+    expect(credentialsStillWork.status).toBe(200);
+
+    const wrongPassword = await auth.handlers.handleSignIn({
+      method: "POST",
+      headers: {},
+      body: {
+        provider: "credentials",
+        credentials: {
+          username: "alice",
+          password: "wrong",
+        },
+      },
+    });
+    expect(wrongPassword.status).toBe(401);
+
+    await settleBroadcastTasks();
+    auth.session.dispose();
+  });
 });
