@@ -17,7 +17,7 @@ npm install @pureq/validation
 # or
 pnpm add @pureq/validation
 # or
-yarn add dpureq/validation
+yarn add @pureq/validation
 ```
 
 ## At a Glance
