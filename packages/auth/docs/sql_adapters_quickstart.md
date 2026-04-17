@@ -8,6 +8,8 @@ This guide gives an Auth.js-like fast path when you want to use a real SQL backe
 - MySQL adapter constructor: createMySqlAdapter
 - Driver executors: createPostgresExecutor, createMySqlExecutor
 - Ready-to-run schema statements: getSqlSchemaStatements
+- Password credential storage table support (`auth_password_credentials`)
+- Passkey/WebAuthn authenticator storage table support (`auth_authenticators`)
 
 ## 1) PostgreSQL setup
 
@@ -82,9 +84,27 @@ const adapter = createPostgresAdapter(pool, {
 ## Operational notes
 
 - Keep unique constraints on (provider, provider_account_id) and email.
+- Keep passkey authenticator credential IDs unique.
 - Verification tokens are consumed as one-time tokens.
 - For strict one-time semantics under high concurrency, use transactions and row-level locking in your app migration strategy.
 - Run contract and security tests after swapping adapters.
+
+## Production readiness gate example
+
+```ts
+import { assessAdapterReadiness } from "@pureq/auth";
+
+const readiness = assessAdapterReadiness(adapter, {
+  deployment: "production",
+  requireEmailProviderSupport: true,
+  requirePasswordAuthSupport: true,
+  requirePasskeySupport: true,
+});
+
+if (readiness.status !== "ready") {
+  throw new Error(`adapter readiness failed: ${readiness.status}`);
+}
+```
 
 ## Versioned migration templates
 

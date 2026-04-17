@@ -18,6 +18,8 @@ This draft defines compatibility expectations for `AuthDatabaseAdapter` implemen
 | Account linking | `linkAccount`, `unlinkAccount` | Yes (unlink recommended) | Supported | `unlinkAccount` optional in interface, but strongly recommended |
 | Session create/read/update/delete | `createSession`, `getSessionAndUser`, `updateSession`, `deleteSession` | Yes | Supported | Session expiry handling is adapter-sensitive |
 | Verification token create/use | `createVerificationToken`, `useVerificationToken` | Required for email provider flows | Supported | Optional in interface, required when email/magic-link is enabled |
+| Password credential storage | `setPasswordCredential`, `getPasswordCredentialByUserId`, `deletePasswordCredential` | Required for password auth flows | Supported | Required when first-party password auth is enabled |
+| Passkey authenticator storage | `createAuthenticator`, `getAuthenticatorByCredentialId`, `listAuthenticatorsByUserId`, `updateAuthenticatorCounter`, `deleteAuthenticator` | Required for Passkey/WebAuthn flows | Supported | Required when `passkeyProvider` is enabled |
 | Expiry semantics | adapter-defined implementation detail | Yes | Partial | In-memory performs best-effort expiry checks, not durable cleanup |
 | Durability across restarts | adapter-defined implementation detail | Usually required in prod | Not supported | In-memory is test/dev only |
 | Concurrency safety | adapter-defined implementation detail | Yes for prod | Partial | Real DB adapters must enforce idempotency/uniqueness |
@@ -37,6 +39,8 @@ Use `assessAdapterReadiness(adapter, options)` to convert capability checks into
 
 - `deployment: "development" | "production"` adjusts strictness.
 - `requireEmailProviderSupport: true` blocks adapters that cannot support verification-token flows.
+- `requirePasswordAuthSupport: true` blocks adapters that cannot support password-credential storage.
+- `requirePasskeySupport: true` blocks adapters that cannot support WebAuthn authenticator storage.
 - output includes `status`, `blockers`, and `warnings` so CI or boot-time checks can fail fast.
 
 ## Minimum Production Adapter Guidance

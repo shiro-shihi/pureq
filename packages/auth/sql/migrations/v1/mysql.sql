@@ -37,3 +37,37 @@ CREATE TABLE IF NOT EXISTS auth_verification_tokens (
   expires_at DATETIME NOT NULL,
   PRIMARY KEY (identifier, token)
 );
+
+CREATE TABLE IF NOT EXISTS auth_password_credentials (
+  user_id VARCHAR(191) PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  algorithm VARCHAR(64) NOT NULL,
+  iterations INT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  CONSTRAINT fk_auth_password_credentials_user_id
+    FOREIGN KEY (user_id)
+    REFERENCES auth_users(id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS auth_authenticators (
+  credential_id VARCHAR(255) PRIMARY KEY,
+  user_id VARCHAR(191) NOT NULL,
+  public_key LONGTEXT NOT NULL,
+  counter BIGINT NOT NULL DEFAULT 0,
+  transports TEXT NULL,
+  backed_up BOOLEAN NULL,
+  device_type VARCHAR(32) NULL,
+  aaguid VARCHAR(191) NULL,
+  created_at DATETIME NOT NULL,
+  last_used_at DATETIME NULL,
+  INDEX auth_authenticators_user_id_idx (user_id),
+  CONSTRAINT fk_auth_authenticators_user_id
+    FOREIGN KEY (user_id)
+    REFERENCES auth_users(id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+);

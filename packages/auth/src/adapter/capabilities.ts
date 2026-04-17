@@ -5,6 +5,8 @@ export interface AdapterCapabilityReport {
   readonly hasCoreAccountMethods: boolean;
   readonly hasCoreSessionMethods: boolean;
   readonly hasVerificationTokenMethods: boolean;
+  readonly hasPasswordCredentialMethods: boolean;
+  readonly hasPasskeyMethods: boolean;
   readonly missingRequired: readonly string[];
   readonly missingRecommended: readonly string[];
   readonly level: "level-a" | "level-b" | "level-c";
@@ -13,6 +15,8 @@ export interface AdapterCapabilityReport {
 export interface AdapterReadinessOptions {
   readonly deployment?: "development" | "production";
   readonly requireEmailProviderSupport?: boolean;
+  readonly requirePasswordAuthSupport?: boolean;
+  readonly requirePasskeySupport?: boolean;
 }
 
 export interface AdapterReadinessReport {
@@ -45,6 +49,14 @@ export function probeAdapterCapabilities(adapter: AuthDatabaseAdapter): AdapterC
     "unlinkAccount",
     "createVerificationToken",
     "useVerificationToken",
+    "setPasswordCredential",
+    "getPasswordCredentialByUserId",
+    "deletePasswordCredential",
+    "createAuthenticator",
+    "getAuthenticatorByCredentialId",
+    "listAuthenticatorsByUserId",
+    "updateAuthenticatorCounter",
+    "deleteAuthenticator",
   ];
 
   const missingRequired = required.filter((key) => !hasMethod(adapter, key)).map(String);
@@ -65,6 +77,16 @@ export function probeAdapterCapabilities(adapter: AuthDatabaseAdapter): AdapterC
     hasMethod(adapter, "deleteSession");
 
   const hasVerificationTokenMethods = hasMethod(adapter, "createVerificationToken") && hasMethod(adapter, "useVerificationToken");
+  const hasPasswordCredentialMethods =
+    hasMethod(adapter, "setPasswordCredential") &&
+    hasMethod(adapter, "getPasswordCredentialByUserId") &&
+    hasMethod(adapter, "deletePasswordCredential");
+  const hasPasskeyMethods =
+    hasMethod(adapter, "createAuthenticator") &&
+    hasMethod(adapter, "getAuthenticatorByCredentialId") &&
+    hasMethod(adapter, "listAuthenticatorsByUserId") &&
+    hasMethod(adapter, "updateAuthenticatorCounter") &&
+    hasMethod(adapter, "deleteAuthenticator");
 
   const level: AdapterCapabilityReport["level"] =
     missingRequired.length === 0 && missingRecommended.length === 0
@@ -78,6 +100,8 @@ export function probeAdapterCapabilities(adapter: AuthDatabaseAdapter): AdapterC
     hasCoreAccountMethods,
     hasCoreSessionMethods,
     hasVerificationTokenMethods,
+    hasPasswordCredentialMethods,
+    hasPasskeyMethods,
     missingRequired,
     missingRecommended,
     level,
@@ -99,6 +123,14 @@ export function assessAdapterReadiness(
 
   if (options.requireEmailProviderSupport && !capability.hasVerificationTokenMethods) {
     blockers.push("email provider flows require createVerificationToken/useVerificationToken support");
+  }
+
+  if (options.requirePasswordAuthSupport && !capability.hasPasswordCredentialMethods) {
+    blockers.push("password auth flows require setPasswordCredential/getPasswordCredentialByUserId/deletePasswordCredential support");
+  }
+
+  if (options.requirePasskeySupport && !capability.hasPasskeyMethods) {
+    blockers.push("passkey flows require createAuthenticator/getAuthenticatorByCredentialId/listAuthenticatorsByUserId/updateAuthenticatorCounter/deleteAuthenticator support");
   }
 
   if (deployment === "production") {

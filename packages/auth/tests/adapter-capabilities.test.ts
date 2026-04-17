@@ -11,6 +11,8 @@ describe("adapter capability probe", () => {
     expect(report.hasCoreAccountMethods).toBe(true);
     expect(report.hasCoreSessionMethods).toBe(true);
     expect(report.hasVerificationTokenMethods).toBe(true);
+    expect(report.hasPasswordCredentialMethods).toBe(true);
+    expect(report.hasPasskeyMethods).toBe(true);
     expect(report.missingRequired).toHaveLength(0);
   });
 
@@ -86,5 +88,51 @@ describe("adapter readiness assessment", () => {
     expect(report.status).toBe("blocked");
     expect(report.blockers.join(" ")).toMatch(/email provider flows require/i);
     expect(report.warnings.join(" ")).toMatch(/missing recommended production method/i);
+  });
+
+  it("marks minimal adapter as blocked when password auth support is required", () => {
+    const minimal = {
+      createUser: async () => ({ id: "u1" }),
+      getUser: async () => null,
+      getUserByEmail: async () => null,
+      getUserByAccount: async () => null,
+      updateUser: async (user: { id: string }) => user,
+      linkAccount: async (account: unknown) => account,
+      createSession: async (session: unknown) => session,
+      getSessionAndUser: async () => null,
+      updateSession: async () => null,
+      deleteSession: async () => {},
+    } as any;
+
+    const report = assessAdapterReadiness(minimal, {
+      deployment: "production",
+      requirePasswordAuthSupport: true,
+    });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/password auth flows require/i);
+  });
+
+  it("marks minimal adapter as blocked when passkey support is required", () => {
+    const minimal = {
+      createUser: async () => ({ id: "u1" }),
+      getUser: async () => null,
+      getUserByEmail: async () => null,
+      getUserByAccount: async () => null,
+      updateUser: async (user: { id: string }) => user,
+      linkAccount: async (account: unknown) => account,
+      createSession: async (session: unknown) => session,
+      getSessionAndUser: async () => null,
+      updateSession: async () => null,
+      deleteSession: async () => {},
+    } as any;
+
+    const report = assessAdapterReadiness(minimal, {
+      deployment: "production",
+      requirePasskeySupport: true,
+    });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/passkey flows require/i);
   });
 });
