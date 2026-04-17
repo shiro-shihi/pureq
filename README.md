@@ -1,5 +1,68 @@
 # pureq
 
+## System Architecture
+
+```mermaid
+graph LR
+    subgraph APP ["Application Layer"]
+        User["Consumer Code"]
+    end
+
+    subgraph MONOREPO ["pureq Monorepo"]
+        direction TB
+        
+        subgraph PKG_AUTH ["@pureq/auth"]
+            direction LR
+            AuthKit["AuthKit / Starter"]
+            Session["Session Manager"]
+        end
+
+        subgraph PKG_CORE ["@pureq/pureq (Core)"]
+            direction LR
+            Executor["Executor"]
+            subgraph MW ["Middleware Stack"]
+                M_Res["Resilience (Retry/CB)"]
+                M_Opt["Optimization (Dedupe)"]
+                M_Auth["Auth Refresh"]
+            end
+        end
+
+        subgraph PKG_VAL ["@pureq/validation"]
+            Schema["Schema / Guard"]
+        end
+    end
+
+    subgraph INFRA ["Infrastructure"]
+        direction TB
+        Fetch["Fetch API / Edge"]
+        DB[(External DB / SQL)]
+    end
+
+    %% Flow
+    User ==> AuthKit
+    AuthKit --> Executor
+    Executor --> M_Res
+    M_Res --> M_Opt
+    M_Opt --> M_Auth
+    
+    %% Dependencies
+    M_Auth -.-> Session
+    M_Auth ==> Fetch
+    Session -.-> DB
+    
+    %% Validation
+    User -.-> Schema
+    Schema -.-> Executor
+
+    %% Styling
+    style APP fill:#f0f7ff,stroke:#005cc5
+    style MONOREPO fill:#ffffff,stroke:#333,stroke-dasharray: 5 5
+    style PKG_CORE fill:#f6ffed,stroke:#52c41a
+    style PKG_AUTH fill:#fff7e6,stroke:#ff8c00
+    style PKG_VAL fill:#f9f0ff,stroke:#722ed1
+    style INFRA fill:#fff1f0,stroke:#f5222d
+```
+
 pureq is a policy-first TypeScript ecosystem for transport and authentication.
 
 This repository contains:
