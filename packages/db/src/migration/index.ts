@@ -45,6 +45,47 @@ export class MigrationManager {
     return toApply.length;
   }
 
+  async rollback(migrations: Migration[]) {
+    await this.setup();
+
+    const latest = await this.getLatestApplied();
+    if (!latest) return 0;
+
+    const migration = migrations.find(m => m.id === latest);
+    if (!migration) {
+      throw new Error(`Cannot rollback: migration ${latest} not found in provided list`);
+    }
+
+    if (!migration.down) {
+      throw new Error(`Cannot rollback: migration ${latest} does not have a down() function`);
+    }
+
+    await this.db.driver.transaction(async () => {
+      await migration.down!(this.db);
+      await this.db.driver.execute(
+        "DELETE FROM _pureq_migrations WHERE id = ?",
+        [migration.id]
+      );
+    });
+
+    return 1;
+  }
+
+  async preview(migrations: Migration[]): Promise<string[]> {
+    await this.setup();
+
+    const applied = await this.db.driver.execute<{ id: string }>(
+      "SELECT id FROM _pureq_migrations ORDER BY timestamp ASC"
+    );
+
+    const appliedIds = new Set(applied.rows.map((r) => r.id));
+    const toApply = migrations
+      .filter((m) => !appliedIds.has(m.id))
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    return toApply.map(m => m.id);
+  }
+
   async getLatestApplied(): Promise<string | null> {
     const result = await this.db.driver.execute<{ id: string }>(
       "SELECT id FROM _pureq_migrations ORDER BY timestamp DESC LIMIT 1"

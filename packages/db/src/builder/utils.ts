@@ -2,11 +2,11 @@ export const IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 export const CONTROL_CHARS_REGEX = /[\0\n\r\t\x08\x1a]/;
 
 export const ALLOWED_OPERATORS = new Set([
-  "=", "!=", "<", "<=", ">", ">=", "LIKE", "ILIKE", "IN", "NOT IN", "IS", "IS NOT", "AND", "OR"
+  "=", "!=", "<", "<=", ">", ">=", "LIKE", "ILIKE", "IN", "NOT IN", "IS", "IS NOT", "AND", "OR", "||"
 ]);
 
 export const ALLOWED_FUNCTIONS = new Set([
-  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "LOWER", "UPPER", "NOW", "DATE"
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "LOWER", "UPPER", "NOW", "DATE", "SUBSTR", "SUBSTRING"
 ]);
 
 export function validateIdentifier(name: string): void {
@@ -47,8 +47,14 @@ export function isCircular(obj: any, seen = new WeakSet()): boolean {
 }
 
 export function validateExpression(expr: any): void {
-  if (!expr || typeof expr !== 'object') return;
+  if (!expr || typeof expr !== 'object') {
+    throw new Error(`Security Exception: Expression must be an object, got ${typeof expr}`);
+  }
   
+  if (!expr.type) {
+    throw new Error(`Security Exception: Expression must have a type`);
+  }
+
   switch (expr.type) {
     case 'column':
       if (expr.table) validateIdentifier(expr.table);
@@ -70,5 +76,7 @@ export function validateExpression(expr: any): void {
         expr.args.forEach((arg: any) => validateExpression(arg));
       }
       break;
+    default:
+      throw new Error(`Security Exception: Unsupported expression type: ${expr.type}`);
   }
 }

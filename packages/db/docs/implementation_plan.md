@@ -79,25 +79,25 @@ packages/db/
 - [x] **AST Compiler**: Develop an engine that parses method chains (`.select().where()`) and converts them into SQL for each database dialect.
 - [x] **Relations & Joins**: Query generation logic that resolves 1:N and M:N relationships (Core logic implemented, basic joins/relations planned).
 - [x] **Validation-Aware Queries**: Optional `.validate()` / `.sanitize()` chain methods that automatically run input validation and output sanitization using the generated validation schema.
-- [ ] **Policy Compiler**: Logic to "push down" `@pureq/validation` policies into `WHERE` clauses and `SELECT` field lists. (Base structure ready).
+- [x] **Policy Compiler**: Logic to "push down" `@pureq/validation` policies into `WHERE` clauses and `SELECT` field lists. (Completed).
 
-### Phase 3: Driver Integration & Connection (In Progress)
+### Phase 3: Driver Integration & Connection (Completed)
 
 - [x] **Pureq Native Drivers**: Implement adapters that communicate directly with low-level libraries like `pg` and `better-sqlite3`.
-- [ ] **Pureq Edge Adapters**: Implement HTTP-based adapters for Cloudflare D1, Neon HTTP, and PlanetScale.
+- [x] **Pureq Edge Adapters**: Implement HTTP-based adapters for Cloudflare D1, Neon HTTP, and PlanetScale.
 - [x] **Unified Result Normalization + Safe Output**: Normalize database-specific data types **and** automatically apply `@pureq/validation` `stringify()` (via `.validate()`).
-- [ ] **Observability Hookup**: Integrate with `@pureq` observability for OTEL tracing and performance metrics.
+- [x] **Observability Hookup**: Integrate with `@pureq` observability for OTEL tracing and performance metrics.
 
-### Phase 4: Reliability & Tooling (In Progress)
+### Phase 4: Reliability & Tooling (Completed)
 
 - [x] **Integration Test Suite**: Rigorous query testing (Mock-based and SQLite in-memory integration).
-- [ ] **Migration Preview**: A simulator feature that compares the current schema with the database state.
+- [x] **Migration Preview**: A simulator feature that compares the current schema with the database state.
 - [x] **Migration Execution**: Execute DDL/DML migrations in deterministic order with transactional wrapping.
-- [ ] **Data Migrations**: Support transform scripts or migration functions.
-- [ ] **Migration Rollback**: Support reversible migrations.
+- [x] **Data Migrations**: Support transform scripts or migration functions.
+- [x] **Migration Rollback**: Support reversible migrations.
 - [x] **Schema Versioning**: Track applied migrations in a migrations table.
-- [ ] **Schema Validation CLI**: `pureq db validate` that checks both DB schema consistency **and** validation policy coverage.
-- [ ] **Dogfooding**: Migrate `packages/auth` SQL adapters to use `@pureq/db`.
+- [x] **Schema Validation CLI**: `pureq db validate` that checks both DB schema consistency **and** validation policy coverage.
+- [x] **Dogfooding**: Migrate `packages/auth` SQL adapters to use `@pureq/db`.
 
 ## 6. Testing Strategy
 

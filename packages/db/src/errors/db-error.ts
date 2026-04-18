@@ -7,6 +7,7 @@ export type DBErrorCode =
   | "NOT_NULL_VIOLATION"
   | "PERMISSION_DENIED"
   | "SYNTAX_ERROR"
+  | "TRANSACTION_ROLLBACK"
   | "UNKNOWN_ERROR";
 
 export class DBError extends Error {
@@ -18,5 +19,34 @@ export class DBError extends Error {
   ) {
     super(message);
     this.name = "DBError";
+    Object.setPrototypeOf(this, DBError.prototype);
+  }
+}
+
+export class UniqueViolationError extends DBError {
+  constructor(message: string, cause?: unknown) {
+    super("UNIQUE_VIOLATION", message, cause, false);
+    this.name = "UniqueViolationError";
+  }
+}
+
+export class ForeignKeyViolationError extends DBError {
+  constructor(message: string, cause?: unknown) {
+    super("FOREIGN_KEY_VIOLATION", message, cause, false);
+    this.name = "ForeignKeyViolationError";
+  }
+}
+
+export class ConnectionError extends DBError {
+  constructor(message: string, cause?: unknown) {
+    super("CONNECTION_FAILURE", message, cause, true);
+    this.name = "ConnectionError";
+  }
+}
+
+export class QueryTimeoutError extends DBError {
+  constructor(message: string, cause?: unknown) {
+    super("QUERY_TIMEOUT", message, cause, true);
+    this.name = "QueryTimeoutError";
   }
 }

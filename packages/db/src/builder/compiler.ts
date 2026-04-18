@@ -25,15 +25,23 @@ export class GenericCompiler {
   compileSelect(statement: SelectStatement): { sql: string; params: unknown[] } {
     const params: unknown[] = [];
     
-    let columns = "*";
+    let columnsSql = "*";
     if (Array.isArray(statement.columns)) {
-      columns = statement.columns.map((c) => this.quoteIdentifier(c)).join(", ");
+      columnsSql = statement.columns.map((c) => {
+        if (typeof c === "string") {
+          return this.quoteIdentifier(c);
+        } else {
+          const compiled = this.compileExpression(c);
+          params.push(...compiled.params);
+          return compiled.sql;
+        }
+      }).join(", ");
     } else if (statement.columns !== "*") {
        throw new Error(`Security Exception: Invalid columns format`);
     }
 
     const table = this.quoteIdentifier(statement.table);
-    let sql = `SELECT ${columns} FROM ${table}`;
+    let sql = `SELECT ${columnsSql} FROM ${table}`;
 
     if (statement.joins && statement.joins.length > 0) {
       for (const join of statement.joins) {
@@ -49,6 +57,16 @@ export class GenericCompiler {
       );
       sql += ` WHERE ${whereSql}`;
       params.push(...whereParams);
+    }
+
+    if (statement.groupBy && statement.groupBy.length > 0) {
+      sql += ` GROUP BY ${statement.groupBy.map(g => this.quoteIdentifier(g)).join(", ")}`;
+    }
+
+    if (statement.having) {
+      const { sql: havingSql, params: havingParams } = this.compileExpression(statement.having);
+      sql += ` HAVING ${havingSql}`;
+      params.push(...havingParams);
     }
 
     if (statement.orderBy && statement.orderBy.length > 0) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DB } from "../../src/core/db.js";
 import { table, column } from "../../src/schema/dsl.js";
 import type { Driver, QueryResult } from "../../src/drivers/types.js";
@@ -16,6 +16,10 @@ describe("Query Builder", () => {
   };
 
   const db = new DB(mockDriver);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("should build a simple select query with quoted identifiers", async () => {
     await db.select().from(users).where("name", "=", "John").limit(10).execute();
@@ -87,6 +91,21 @@ describe("Query Builder", () => {
     expect(mockDriver.execute).toHaveBeenCalledWith(
       'DELETE FROM "users" WHERE ("age" < ?)',
       [18]
+    );
+  });
+
+  it("should apply PII masking and hide redaction", async () => {
+    const sensitive = table("sensitive", {
+      id: column.number().primary(),
+      email: column.string().policy({ pii: true, redact: "mask" }),
+      secret: column.string(),
+    });
+
+    await db.select().from(sensitive).withContext({ scopes: [] }).execute();
+
+    expect(mockDriver.execute).toHaveBeenCalledWith(
+      'SELECT "id", (SUBSTR("sensitive"."email", ?, ?) || ?), "secret" FROM "sensitive"',
+      [1, 3, "***"]
     );
   });
 });

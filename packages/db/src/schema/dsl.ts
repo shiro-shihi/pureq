@@ -4,12 +4,20 @@ export type ColumnType =
   | "boolean"
   | "date"
   | "json"
-  | "uuid";
+  | "uuid"
+  | "enum";
 
 export interface ColumnOptions {
   primaryKey?: boolean | undefined;
   nullable?: boolean | undefined;
+  unique?: boolean | undefined;
+  index?: boolean | undefined;
   default?: unknown | undefined;
+  enumValues?: string[] | undefined;
+  references?: {
+    table: string;
+    column: string;
+  } | undefined;
   policy?: {
     pii?: boolean | undefined;
     redact?: "mask" | "hide" | "none" | undefined;
@@ -40,6 +48,30 @@ export class ColumnBuilder<
     });
   }
 
+  unique() {
+    return new ColumnBuilder<TType, TNullable>(this.type, {
+      ...this.options,
+      unique: true,
+    });
+  }
+
+  index() {
+    return new ColumnBuilder<TType, TNullable>(this.type, {
+      ...this.options,
+      index: true,
+    });
+  }
+
+  references(table: string | { name: string }, column: string) {
+    return new ColumnBuilder<TType, TNullable>(this.type, {
+      ...this.options,
+      references: {
+        table: typeof table === "string" ? table : table.name,
+        column,
+      },
+    });
+  }
+
   policy(policy: ColumnOptions["policy"]) {
     return new ColumnBuilder<TType, TNullable>(this.type, {
       ...this.options,
@@ -62,6 +94,7 @@ export const column = {
   uuid: () => new ColumnBuilder("uuid"),
   date: () => new ColumnBuilder("date"),
   json: () => new ColumnBuilder("json"),
+  enum: (values: string[]) => new ColumnBuilder("enum", { enumValues: values }),
 };
 
 const IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;

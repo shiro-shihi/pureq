@@ -1,5 +1,5 @@
-import { DBError, type DBErrorCode } from "../errors/db-error.js";
 import type { Driver, QueryResult } from "./types.js";
+import { normalizeSqliteError } from "./utils.js";
 
 interface BetterSqlite3Database {
   prepare(sql: string): any;
@@ -25,7 +25,7 @@ export class BetterSqlite3Driver implements Driver {
         };
       }
     } catch (e: any) {
-      throw this.normalizeError(e);
+      throw normalizeSqliteError(e);
     }
   }
 
@@ -36,32 +36,7 @@ export class BetterSqlite3Driver implements Driver {
             return await fn(this);
         });
     } catch (e: any) {
-        throw this.normalizeError(e);
+        throw normalizeSqliteError(e);
     }
-  }
-
-  private normalizeError(e: any): DBError {
-    if (e instanceof DBError) return e;
-
-    let code: DBErrorCode = "UNKNOWN_ERROR";
-    let message = e.message || "Unknown database error";
-    let retryable = false;
-
-    const sqliteMessage = e.message || "";
-
-    if (sqliteMessage.includes("UNIQUE constraint failed")) {
-      code = "UNIQUE_VIOLATION";
-    } else if (sqliteMessage.includes("NOT NULL constraint failed")) {
-      code = "NOT_NULL_VIOLATION";
-    } else if (sqliteMessage.includes("FOREIGN KEY constraint failed")) {
-      code = "FOREIGN_KEY_VIOLATION";
-    } else if (sqliteMessage.includes("syntax error")) {
-      code = "SYNTAX_ERROR";
-    } else if (sqliteMessage.includes("database is locked")) {
-      code = "CONNECTION_FAILURE";
-      retryable = true;
-    }
-
-    return new DBError(code, message, e, retryable);
   }
 }

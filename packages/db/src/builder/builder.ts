@@ -7,6 +7,7 @@ import type { SelectStatement, InsertStatement, UpdateStatement, DeleteStatement
 import { GenericCompiler } from "./compiler.js";
 import type { QueryContext } from "../types/context.js";
 import { validateIdentifier, isCircular, validateOperator, validateExpression } from "./utils.js";
+import { type QuerySpan } from "../types/diagnostics.js";
 
 export type JoinResult<TBase extends Table<any, any>, TJoined extends Record<string, Table<any, any>>> = 
   InferSelect<TBase> & {
@@ -63,12 +64,45 @@ export class SelectBuilder<
     table: T,
     on: (cols: { base: TBase; joined: T }) => Expression
   ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
+    return this.join("inner", alias, table, on);
+  }
+
+  leftJoin<T extends Table<any, any>, K extends string>(
+    alias: K,
+    table: T,
+    on: (cols: { base: TBase; joined: T }) => Expression
+  ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
+    return this.join("left", alias, table, on);
+  }
+
+  rightJoin<T extends Table<any, any>, K extends string>(
+    alias: K,
+    table: T,
+    on: (cols: { base: TBase; joined: T }) => Expression
+  ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
+    return this.join("right", alias, table, on);
+  }
+
+  fullJoin<T extends Table<any, any>, K extends string>(
+    alias: K,
+    table: T,
+    on: (cols: { base: TBase; joined: T }) => Expression
+  ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
+    return this.join("full", alias, table, on);
+  }
+
+  private join<T extends Table<any, any>, K extends string>(
+    type: Join["type"],
+    alias: K,
+    table: T,
+    on: (cols: { base: TBase; joined: T }) => Expression
+  ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
     validateString(alias, "Alias");
     validateIdentifier(alias);
     const joinExpr = on({ base: this.tableObj as any, joined: table });
     validateExpression(joinExpr);
     const join: Join = {
-      type: "inner",
+      type,
       table: table.name,
       on: joinExpr,
     };
@@ -77,11 +111,32 @@ export class SelectBuilder<
     return this as any;
   }
 
-  where(column: string, operator: string, value: unknown): SelectBuilder<TBase, TJoined> {
+  groupBy(...columns: string[]): SelectBuilder<TBase, TJoined> {
+    columns.forEach(c => {
+      validateString(c, "Group By Column");
+      validateIdentifier(c);
+    });
+    this.statement.groupBy = columns;
+    return this;
+  }
+
+  having(expression: Expression): SelectBuilder<TBase, TJoined> {
+    validateExpression(expression);
+    this.statement.having = expression;
+    return this;
+  }
+
+  where(column: string | Expression, operator?: string, value?: unknown): SelectBuilder<TBase, TJoined> {
+    if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
+      validateExpression(column);
+      this.addWhere(column as Expression);
+      return this;
+    }
+
     validateString(column, "Column");
-    validateIdentifier(column);
-    validateString(operator, "Operator");
-    validateOperator(operator);
+    validateIdentifier(column as string);
+    validateString(operator!, "Operator");
+    validateOperator(operator!);
     
     if (isCircular(value)) {
       throw new Error("Security Exception: Circular reference detected in literal value");
@@ -89,8 +144,8 @@ export class SelectBuilder<
 
     const newExpr: Expression = {
       type: "binary",
-      left: { type: "column", name: column },
-      operator,
+      left: { type: "column", name: column as string },
+      operator: operator!,
       right: { type: "literal", value },
     };
 
@@ -153,24 +208,45 @@ export class SelectBuilder<
 
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileSelect(pushdownStatement);
-    const result = await this.db.driver.execute<unknown>(sql, params);
     
-    let rows = result.rows;
+    const span: QuerySpan = {
+      sql,
+      params,
+      startTime: Date.now(),
+      policiesApplied: [] as string[]
+    };
+    
+    this.db.diagnostics.onQueryStart(span);
+    
+    try {
+      const result = await this.db.driver.execute<unknown>(sql, params);
+      let rows = result.rows;
 
-    if (this.shouldValidate && this.tableObj) {
-      const schema = toValidationSchema(this.tableObj);
-      const validatedRows = [];
-      for (const row of rows) {
-        const parsed = parseWithOptions(schema, row);
-        if (!isOk(parsed)) {
-          throw new Error(`Validation failed for row: ${JSON.stringify(parsed.error)}`);
+      if (this.shouldValidate && this.tableObj) {
+        const schema = toValidationSchema(this.tableObj);
+        const validatedRows = [];
+        for (const row of rows) {
+          const parsed = parseWithOptions(schema, row);
+          if (!isOk(parsed)) {
+            throw new Error(`Validation failed for row: ${JSON.stringify(parsed.error)}`);
+          }
+          validatedRows.push(parsed.value.data as any);
         }
-        validatedRows.push(parsed.value.data as any);
+        rows = validatedRows;
       }
-      rows = validatedRows;
-    }
 
-    return rows as any;
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+
+      return rows as any;
+    } catch (error) {
+      span.error = error as Error;
+      span.endTime = Date.now();
+      span.duration = span.endTime - (span.startTime || 0);
+      this.db.diagnostics.onQueryEnd(span);
+      throw error;
+    }
   }
 
   private applyPolicyPushdown(): SelectStatement {
@@ -222,20 +298,86 @@ export class SelectBuilder<
     }
 
     // Column-Level Security (CLS)
-    const allowedColumns = Object.entries(table.columns)
-        .filter(([_, col]) => {
-            const policy = (col as any).options?.policy;
-            if (!policy || !policy.scope || policy.scope.length === 0) return true;
-            return policy.scope.some((s: string) => userScopes.has(s));
-        })
-        .map(([name]) => name);
+    const allowedColumns: (string | Expression)[] = [];
+
+    for (const [name, col] of Object.entries(table.columns)) {
+      const options = (col as any).options;
+      const policy = options?.policy;
+      
+      // 1. Check Scope
+      const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
+      
+      if (!hasScope) {
+        if (policy?.redact === "hide") continue;
+        // If not hidden but no scope, we might want to mask or nullify. 
+        // For now, if no scope and not explicitly hidden, we just skip it to be safe.
+        continue; 
+      }
+
+      // 2. Check PII/Redact
+      if (policy?.pii && policy?.redact === "mask") {
+        // Simple masking: first 3 chars + ***
+        // In a real dialect-specific compiler, this would be more sophisticated.
+        allowedColumns.push({
+          type: "binary",
+          left: {
+            type: "function",
+            name: "SUBSTR",
+            args: [
+              { type: "column", name, table: tableName },
+              { type: "literal", value: 1 },
+              { type: "literal", value: 3 }
+            ]
+          },
+          operator: "||",
+          right: { type: "literal", value: "***" }
+        });
+      } else {
+        allowedColumns.push(name);
+      }
+    }
 
     if (statement.columns === "*") {
         statement.columns = allowedColumns;
     } else if (Array.isArray(statement.columns)) {
-        statement.columns = statement.columns.filter(c => allowedColumns.includes(c));
+        // Filter and substitute requested columns
+        const newRequested: (string | Expression)[] = [];
+        for (const req of statement.columns) {
+          if (typeof req === "string") {
+            const allowed = allowedColumns.find(a => (typeof a === "string" ? a === req : (a as any).left.args[0].name === req));
+            if (allowed) newRequested.push(allowed);
+          } else {
+            // If it's already an expression, we assume it's validated elsewhere or passed through
+            newRequested.push(req);
+          }
+        }
+        statement.columns = newRequested;
     }
   }
+}
+
+export function count(column: string | "*"): Expression {
+  return {
+    type: "function",
+    name: "COUNT",
+    args: [typeof column === "string" ? { type: "column", name: column } : { type: "literal", value: "*" }]
+  };
+}
+
+export function sum(column: string): Expression {
+  return { type: "function", name: "SUM", args: [{ type: "column", name: column }] };
+}
+
+export function avg(column: string): Expression {
+  return { type: "function", name: "AVG", args: [{ type: "column", name: column }] };
+}
+
+export function min(column: string): Expression {
+  return { type: "function", name: "MIN", args: [{ type: "column", name: column }] };
+}
+
+export function max(column: string): Expression {
+  return { type: "function", name: "MAX", args: [{ type: "column", name: column }] };
 }
 
 export class InsertBuilder<TTable extends Table<any, any>> {
@@ -250,7 +392,23 @@ export class InsertBuilder<TTable extends Table<any, any>> {
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileInsert(this.statement);
-    return await this.db.driver.execute(sql, params);
+    
+    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    this.db.diagnostics.onQueryStart(span);
+    
+    try {
+      const result = await this.db.driver.execute(sql, params);
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      return result;
+    } catch (error) {
+      span.error = error as Error;
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      throw error;
+    }
   }
 }
 
@@ -263,17 +421,24 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
     this.statement.values = data as Record<string, unknown>;
     return this;
   }
-  where(column: string, operator: string, value: unknown): UpdateBuilder<TTable> {
-    validateString(column, "Column");
-    validateIdentifier(column);
-    validateString(operator, "Operator");
-    validateOperator(operator);
-    const newExpr: Expression = {
-      type: "binary",
-      left: { type: "column", name: column },
-      operator,
-      right: { type: "literal", value },
-    };
+  where(column: string | Expression, operator?: string, value?: unknown): UpdateBuilder<TTable> {
+    let newExpr: Expression;
+    if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
+      validateExpression(column);
+      newExpr = column as Expression;
+    } else {
+      validateString(column, "Column");
+      validateIdentifier(column as string);
+      validateString(operator!, "Operator");
+      validateOperator(operator!);
+      newExpr = {
+        type: "binary",
+        left: { type: "column", name: column as string },
+        operator: operator!,
+        right: { type: "literal", value },
+      };
+    }
+
     if (this.statement.where) {
       this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
     } else {
@@ -284,7 +449,23 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileUpdate(this.statement);
-    return await this.db.driver.execute(sql, params);
+
+    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    this.db.diagnostics.onQueryStart(span);
+
+    try {
+      const result = await this.db.driver.execute(sql, params);
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      return result;
+    } catch (error) {
+      span.error = error as Error;
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      throw error;
+    }
   }
 }
 
@@ -293,17 +474,24 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
   constructor(private readonly db: DB, private readonly table: TTable) {
     this.statement = { type: "delete", table: table.name };
   }
-  where(column: string, operator: string, value: unknown): DeleteBuilder<TTable> {
-    validateString(column, "Column");
-    validateIdentifier(column);
-    validateString(operator, "Operator");
-    validateOperator(operator);
-    const newExpr: Expression = {
-      type: "binary",
-      left: { type: "column", name: column },
-      operator,
-      right: { type: "literal", value },
-    };
+  where(column: string | Expression, operator?: string, value?: unknown): DeleteBuilder<TTable> {
+    let newExpr: Expression;
+    if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
+      validateExpression(column);
+      newExpr = column as Expression;
+    } else {
+      validateString(column, "Column");
+      validateIdentifier(column as string);
+      validateString(operator!, "Operator");
+      validateOperator(operator!);
+      newExpr = {
+        type: "binary",
+        left: { type: "column", name: column as string },
+        operator: operator!,
+        right: { type: "literal", value },
+      };
+    }
+
     if (this.statement.where) {
       this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
     } else {
@@ -314,6 +502,22 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileDelete(this.statement);
-    return await this.db.driver.execute(sql, params);
+
+    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    this.db.diagnostics.onQueryStart(span);
+
+    try {
+      const result = await this.db.driver.execute(sql, params);
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      return result;
+    } catch (error) {
+      span.error = error as Error;
+      span.endTime = Date.now();
+      span.duration = span.endTime - span.startTime;
+      this.db.diagnostics.onQueryEnd(span);
+      throw error;
+    }
   }
 }

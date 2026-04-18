@@ -1,9 +1,13 @@
 import type { Driver } from "../drivers/types.js";
 import { SelectBuilder } from "../builder/builder.js";
 import type { Table } from "../schema/dsl.js";
+import { type Diagnostics, DefaultDiagnostics } from "../types/diagnostics.js";
 
 export class DB {
-  constructor(public readonly driver: Driver) {}
+  constructor(
+    public readonly driver: Driver,
+    public readonly diagnostics: Diagnostics = new DefaultDiagnostics()
+  ) {}
 
   select(columns: string[] | "*" = "*") {
     return new SelectBuilder(this).select(columns);

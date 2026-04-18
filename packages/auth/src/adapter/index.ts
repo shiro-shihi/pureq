@@ -15,6 +15,7 @@ export {
   createSqlAdapter,
   getSqlSchemaStatements,
 } from "./sql.js";
+export { createPureqDbAdapter, createAuthSchemas } from "./pureq.js";
 export type {
   MySqlClientLike,
   PostgresClientLike,

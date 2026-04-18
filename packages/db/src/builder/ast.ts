@@ -13,9 +13,11 @@ export interface Join {
 export interface SelectStatement {
   type: "select";
   table: string;
-  columns: string[] | "*";
+  columns: (string | Expression)[] | "*";
   joins?: Join[];
   where?: Expression;
+  groupBy?: string[];
+  having?: Expression;
   limit?: number;
   offset?: number;
   orderBy?: { column: string; direction: "ASC" | "DESC" }[];
