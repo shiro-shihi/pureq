@@ -127,42 +127,54 @@ export class SelectBuilder<
   }
 
   where(column: string | Expression, operator?: string, value?: unknown): SelectBuilder<TBase, TJoined> {
+    let expr: Expression;
     if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
       validateExpression(column);
-      this.addWhere(column as Expression);
-      return this;
+      if (operator) {
+        validateString(operator, "Operator");
+        validateOperator(operator);
+        if (isCircular(value)) throw new Error("Security Exception: Circular reference detected");
+        expr = {
+          type: "binary",
+          left: column as Expression,
+          operator,
+          right: { type: "literal", value }
+        };
+      } else {
+        expr = column as Expression;
+      }
+    } else {
+      validateString(column as string, "Column");
+      validateIdentifier(column as string);
+      validateString(operator!, "Operator");
+      validateOperator(operator!);
+      
+      if (isCircular(value)) {
+        throw new Error("Security Exception: Circular reference detected in literal value");
+      }
+
+      expr = {
+        type: "binary",
+        left: { type: "column", name: column as string },
+        operator: operator!,
+        right: { type: "literal", value },
+      };
     }
 
-    validateString(column, "Column");
-    validateIdentifier(column as string);
-    validateString(operator!, "Operator");
-    validateOperator(operator!);
-    
-    if (isCircular(value)) {
-      throw new Error("Security Exception: Circular reference detected in literal value");
-    }
-
-    const newExpr: Expression = {
-      type: "binary",
-      left: { type: "column", name: column as string },
-      operator: operator!,
-      right: { type: "literal", value },
-    };
-
-    this.addWhere(newExpr);
+    this.addWhere(this.statement, expr);
     return this;
   }
 
-  private addWhere(expr: Expression) {
-    if (this.statement.where) {
-      this.statement.where = {
+  private addWhere(statement: SelectStatement | UpdateStatement | DeleteStatement, expr: Expression) {
+    if (statement.where) {
+      statement.where = {
         type: "binary",
-        left: this.statement.where,
+        left: statement.where,
         operator: "AND",
         right: expr,
       };
     } else {
-      this.statement.where = expr;
+      statement.where = expr;
     }
   }
 
@@ -199,9 +211,53 @@ export class SelectBuilder<
     return this;
   }
 
+  /**
+   * Eagerly loads a relation defined in the table schema.
+   * (Basic implementation for relation resolution)
+   */
+  with<K extends TBase extends Table<any, any> ? keyof (TBase["options"]["relations"] & {}) : never>(
+    relationName: K
+  ): SelectBuilder<TBase, TJoined & { [P in K & string]: TBase extends Table<any, any> ? (TBase["options"]["relations"] & {})[P]["target"] : never }> {
+    if (!this.tableObj) throw new Error(".with() must be called after .from()");
+    
+    const rel = (this.tableObj.options.relations as any)?.[relationName];
+    if (!rel) throw new Error(`Relation "${String(relationName)}" not defined on table "${this.tableObj.name}"`);
+
+    // Automatically add an inner join based on the relation definition
+    const targetTable = rel.target;
+    const foreignKey = rel.foreignKey;
+    
+    // For belongsTo: thisTable.foreignKey = targetTable.primaryKey
+    // For simplicity in this iteration, we assume targetTable has an 'id' column as PK
+    return this.innerJoin(relationName as any, targetTable as any, ({ base, joined }) => ({
+      type: "binary",
+      left: { type: "column", name: foreignKey, table: (base as any).name },
+      operator: "=",
+      right: { type: "column", name: "id", table: (joined as any).name }
+    })) as any;
+  }
+
   async execute(): Promise<TBase extends Table<any, any> ? (keyof TJoined extends never ? InferSelect<TBase>[] : JoinResult<TBase, TJoined>[]) : unknown[]> {
     if (!this.statement.table) {
       throw new Error("Table must be specified for SELECT query");
+    }
+
+    // If it's a join and columns are *, expand them to include all table prefixes
+    // for proper structural mapping.
+    if (this.statement.joins && this.statement.joins.length > 0 && this.statement.columns === "*") {
+       const expanded: (string | Expression)[] = [];
+       if (this.tableObj) {
+         const baseTable = this.tableObj as Table<any, any>;
+         Object.keys(baseTable.columns).forEach(col => {
+           expanded.push({ type: "column", name: col, table: baseTable.name });
+         });
+       }
+       Object.entries(this.joinedTables as Record<string, Table<any, any>>).forEach(([alias, table]) => {
+         Object.keys(table.columns).forEach(col => {
+           expanded.push({ type: "column", name: col, table: alias });
+         });
+       });
+       this.statement.columns = expanded;
     }
 
     const pushdownStatement = this.applyPolicyPushdown();
@@ -219,8 +275,39 @@ export class SelectBuilder<
     this.db.diagnostics.onQueryStart(span);
     
     try {
-      const result = await this.db.driver.execute<unknown>(sql, params);
+      const result = await this.db.driver.execute<any>(sql, params);
       let rows = result.rows;
+
+      // Structure mapping for JOIN results
+      if (this.statement.joins && this.statement.joins.length > 0) {
+        rows = rows.map(row => {
+          const structured: any = {};
+          for (const [key, value] of Object.entries(row)) {
+            if (key.startsWith("__") && key.includes("__", 2)) {
+               // Key is like "__table__column"
+               const parts = key.split("__");
+               const tableName = parts[1];
+               const colName = parts[2];
+               
+               if (!tableName || !colName) {
+                 structured[key] = value;
+                 continue;
+               }
+
+               // Find the alias/key used for this table in joins
+               const alias = Object.keys(this.joinedTables as object).find(a => (this.joinedTables as any)[a].name === tableName) || tableName;
+               
+               if (!structured[alias] || typeof structured[alias] !== "object") {
+                 structured[alias] = {};
+               }
+               structured[alias][colName] = value;
+            } else {
+               structured[key] = value;
+            }
+          }
+          return structured;
+        });
+      }
 
       if (this.shouldValidate && this.tableObj) {
         const schema = toValidationSchema(this.tableObj);
@@ -277,24 +364,21 @@ export class SelectBuilder<
     const tableName = alias || table.name;
 
     // Row-Level Security (RLS)
-    if (this.context?.userId && table.columns["userId"]) {
+    
+    // 1. Generic Table Policy (Priority)
+    if (table.options.policy?.rls && this.context) {
+      const genericFilter = table.options.policy.rls(this.context);
+      this.addWhere(statement, genericFilter);
+    } 
+    // 2. Legacy/Convenience Default userId Policy
+    else if (this.context?.userId && table.columns["userId"]) {
        const rowFilter: Expression = {
          type: "binary",
          left: { type: "column", name: "userId", table: tableName },
          operator: "=",
          right: { type: "literal", value: this.context.userId }
        };
-       
-       if (statement.where) {
-         statement.where = {
-           type: "binary",
-           left: statement.where,
-           operator: "AND",
-           right: rowFilter
-         };
-       } else {
-         statement.where = rowFilter;
-       }
+       this.addWhere(statement, rowFilter);
     }
 
     // Column-Level Security (CLS)

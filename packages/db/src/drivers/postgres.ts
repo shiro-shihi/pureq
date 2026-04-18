@@ -10,6 +10,12 @@ export class PostgresDriver implements Driver {
   constructor(private readonly client: PostgresClient) {}
 
   async execute<T = unknown>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
+    // Security: PostgreSQL has a limit of 65,535 (uint16) parameters per query.
+    // Exceeding this limit causes a crash or silent failure in some drivers.
+    if (params.length > 65535) {
+      throw new Error(`Security Exception: Too many query parameters (${params.length}). PostgreSQL limit is 65,535.`);
+    }
+
     try {
       const result = await this.client.query(sql, params);
       const res: QueryResult<T> = {
