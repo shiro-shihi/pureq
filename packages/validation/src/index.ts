@@ -37,6 +37,9 @@ export type {
 export { DEFAULT_MAX_PARSE_DEPTH, parseWithOptions } from "./schema/base.js";
 export { ObjectSchema } from "./schema/composite/object.js";
 export { ArraySchema } from "./schema/composite/array.js";
+export { NullableSchema } from "./schema/composite/nullable.js";
+export { OptionalSchema } from "./schema/composite/optional.js";
+export { GuardSchema } from "./schema/composite/guard.js";
 export { StringSchema } from "./schema/primitive/string.js";
 export { NumberSchema } from "./schema/primitive/number.js";
 export { BooleanSchema } from "./schema/primitive/boolean.js";

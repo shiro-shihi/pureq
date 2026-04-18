@@ -75,7 +75,22 @@ Docs:
 
 - [Package README](https://github.com/shiro-shihi/pureq/blob/main/packages/validation/README.md)
 - [Implementation Plan](https://github.com/shiro-shihi/pureq/blob/main/packages/validation/docs/Implementation_plan.md)
-- [Release Notes](https://github.com/shiro-shihi/pureq/blob/main/packages/validation/docs/release-notes-v0.1.0-draft.md)
+
+### @pureq/db
+
+Native-first, validation-integrated DB driver and query builder.
+
+Main characteristics:
+
+- Schema as single source of truth for types, validation, and policies
+- Native query builder with AST-based SQL compilation
+- Built-in validation bridge for `@pureq/validation`
+- Support for Postgres, SQLite, Neon (HTTP), and Cloudflare D1
+- Policy push-down to the database level (PII, access control)
+
+Docs:
+
+- [Package README](https://github.com/shiro-shihi/pureq/blob/main/packages/db/README.md)
 
 ## Why pureq
 
@@ -114,9 +129,8 @@ const starter = await createAuthStarter({
 
 - [Transport Docs](https://github.com/shiro-shihi/pureq/blob/main/packages/pureq/docs/README.md)
 - [Auth Docs](https://github.com/shiro-shihi/pureq/blob/main/packages/auth/docs/README.md)
-- [Auth Implementation Plan](https://github.com/shiro-shihi/pureq/blob/main/packages/auth/plan.md)
 - [Validation README](https://github.com/shiro-shihi/pureq/blob/main/packages/validation/README.md)
-- [Validation Release Notes](https://github.com/shiro-shihi/pureq/blob/main/packages/validation/docs/release-notes-v0.1.0-draft.md)
+- [DB README](https://github.com/shiro-shihi/pureq/blob/main/packages/db/README.md)
 
 ## Installation
 
@@ -126,6 +140,7 @@ Install the package you need:
 pnpm add @pureq/pureq
 pnpm add @pureq/auth
 pnpm add @pureq/validation
+pnpm add @pureq/db
 ```
 
 ## License

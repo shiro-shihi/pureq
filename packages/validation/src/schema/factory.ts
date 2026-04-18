@@ -1,14 +1,15 @@
 import { ArraySchema } from "./composite/array.js";
 import { ObjectSchema } from "./composite/object.js";
+import { NullableSchema } from "./composite/nullable.js";
+import { OptionalSchema } from "./composite/optional.js";
+import { GuardSchema } from "./composite/guard.js";
 import type { PolicySchema } from "./base.js";
 import { BooleanSchema } from "./primitive/boolean.js";
 import { NumberSchema } from "./primitive/number.js";
 import { StringSchema } from "./primitive/string.js";
-import {
-  createGuard,
-  type GuardExecutor,
-  type GuardFunction,
-  type GuardOptions,
+import type {
+  GuardFunction,
+  GuardOptions,
 } from "../guard/guard.js";
 
 export const v = {
@@ -19,6 +20,8 @@ export const v = {
     new ObjectSchema(shape),
   array: <TItemSchema extends PolicySchema<unknown>>(schema: TItemSchema): ArraySchema<TItemSchema> =>
     new ArraySchema(schema),
-  guard: <T>(fn: GuardFunction<T>, nameOrOptions?: string | GuardOptions): GuardExecutor<T> =>
-    createGuard(fn, nameOrOptions),
+  nullable: <T>(schema: PolicySchema<T>): NullableSchema<T> => new NullableSchema(schema),
+  optional: <T>(schema: PolicySchema<T>): OptionalSchema<T> => new OptionalSchema(schema),
+  guard: <T>(fn: GuardFunction<T>, nameOrOptions?: string | GuardOptions): GuardSchema<T> =>
+    new GuardSchema(fn, nameOrOptions),
 };
