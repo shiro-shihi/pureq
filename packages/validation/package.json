@@ -1,6 +1,6 @@
 {
   "name": "@pureq/validation",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Policy-ready validation primitives for pureq",
   "type": "module",
   "main": "./dist/index.js",

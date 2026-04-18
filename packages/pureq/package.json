@@ -1,6 +1,6 @@
 {
   "name": "@pureq/pureq",
-  "version": "1.1.12",
+  "version": "1.1.13",
   "description": "Functional, immutable, and type-safe HTTP client layer with middleware composition.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --build",
     "benchmark": "tsx ./scripts/benchmark.ts",
     "test:browser": "vitest run tests/browser-runtime.smoke.test.ts --environment jsdom",
     "test:edge": "esbuild scripts/edge-smoke-entry.ts --bundle --format=iife --platform=browser --outfile=.tmp/edge-smoke.bundle.js && node ./scripts/run-edge-smoke.mjs",

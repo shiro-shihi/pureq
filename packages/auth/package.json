@@ -1,6 +1,6 @@
 {
   "name": "@pureq/auth",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Authentication and token management middleware for pureq",
   "type": "module",
   "main": "./dist/index.js",
