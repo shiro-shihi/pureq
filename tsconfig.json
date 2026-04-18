@@ -22,6 +22,7 @@
   "references": [
     { "path": "./packages/pureq" },
     { "path": "./packages/auth" },
-    { "path": "./packages/validation" }
+    { "path": "./packages/validation" },
+    { "path": "./packages/db" }
   ]
 }
