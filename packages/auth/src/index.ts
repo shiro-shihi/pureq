@@ -13,10 +13,6 @@ export type {
 	OIDCTokenEndpointAuthMethod,
 	OIDCProviderDefinition,
 	OIDCCallbackParams,
-	OIDCAccountAutoRefreshOptions,
-	OIDCAccountAutoRefreshResult,
-	OIDCStoredAccountAutoRefreshOptions,
-	OIDCStoredAccountAutoRefreshResult,
 	TokenResponse,
 	AuthTokens,
 	AuthSessionState,
@@ -72,13 +68,10 @@ export type {
 	AuthAccount,
 	AuthPersistedSession,
 	AuthVerificationToken,
-	AuthPasswordCredential,
-	AuthPasskeyCredential,
 	AuthDatabaseAdapter,
 	AuthProvider,
 	AuthCredentialsProviderOptions,
 	AuthEmailProviderOptions,
-	AuthPasskeyProviderOptions,
 	AuthCallbacks,
 	AuthEncryption,
 	AuthEncryptionOptions,
@@ -102,16 +95,7 @@ export {
 } from "./storage/index.js";
 export { authBearer, authRefresh, authSession, withTokenLifecycle, authBasic, authCustom, withBroadcastSync } from "./middleware/index.js";
 export { decodeJwt, verifyJwt } from "./jwt/index.js";
-export {
-	createOIDCFlow,
-	createOIDCFlowFromProvider,
-	createOIDCflow,
-	createOIDCflowFromProvider,
-	parseOIDCCallbackParams,
-	refreshOIDCAccountIfNeeded,
-	refreshStoredOIDCAccountIfNeeded,
-	oidcProviders,
-} from "./oidc/index.js";
+export { createOIDCFlow, createOIDCFlowFromProvider, createOIDCflow, createOIDCflowFromProvider, parseOIDCCallbackParams, oidcProviders } from "./oidc/index.js";
 export { createAuthError, buildAuthError } from "./shared/index.js";
 export { createAuthCsrfProtection, withCsrfProtection } from "./csrf/index.js";
 export { createAuthRevocationRegistry, withRevocationGuard } from "./revocation/index.js";
@@ -138,8 +122,6 @@ export {
 	analyzeAuthMigration,
 	formatMigrationParityReport,
 	generateMigrationChecklists,
-	getAuthenticatorCredentialCollisionCheckQuery,
-	extractValidCredentialIds,
 } from "./migration/index.js";
 export {
 	createAuthSessionManager,
@@ -178,7 +160,6 @@ export type {
 export {
 	credentialsProvider,
 	emailProvider,
-	passkeyProvider,
 	createTopProviderPreset,
 	listTopProviderPresets,
 	validateProviderCallbackContract,
@@ -191,7 +172,6 @@ export type {
 	ProviderCallbackContractInput,
 	ProviderCallbackContractResult,
 	ProviderNormalizedError,
-	AuthPasskeyChallengeFlow,
 } from "./providers/index.js";
 export { composeAuthCallbacks } from "./callbacks/index.js";
 export { createAuthEncryption } from "./encryption/index.js";

@@ -16,12 +16,14 @@
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
     "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force"
+    "moduleDetection": "force",
+    "ignoreDeprecations": "6.0"
   },
   "include": [],
   "references": [
     { "path": "./packages/pureq" },
     { "path": "./packages/auth" },
-    { "path": "./packages/validation" }
+    { "path": "./packages/validation" },
+    { "path": "./packages/db" }
   ]
 }

@@ -2,12 +2,24 @@
 
 All notable changes to `@pureq/validation` are documented in this file.
 
-## [Unreleased]
+## [0.2.0]
 
-### Added (Unreleased)
+### Added (0.2.0)
 
-- Policy-aware parsing, RFC 6901 policy maps, guardrail chaining, and policy-aware stringify support.
-- Package-level onboarding links and draft release notes for `@pureq/validation`.
+- `NullableSchema` and `v.nullable()` support for explicit null handling in DB-integrated validation.
+- `OptionalSchema` and `v.optional()` support for undefined handling.
+- `GuardSchema` and `v.guard()` integration as a first-class `PolicySchema`.
+- Support for callable guard schemas for flexible chaining.
+
+### Fixed (0.2.0)
+
+- Removed forbidden `throw` statements in `GuardSchema` to maintain zero-throw policy.
+
+## [0.1.1]
+
+### Added (0.1.1)
+
+- Initial stable release with policy-aware validation.
 
 ## [0.1.0-draft]
 

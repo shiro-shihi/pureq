@@ -22,3 +22,16 @@ All notable changes to `@pureq/auth` are documented in this file.
 - `linkAccount` handling is now idempotent in reference adapters and updates existing records on repeated provider callback/account-link writes.
 - Core account-link flow updates persisted account token fields when adapter account-update support is available.
 - Documentation updated to include Passkey/WebAuthn and OIDC auto-refresh operational guidance.
+
+## [0.2.4]
+
+### Changed (0.2.4)
+
+- Updated build configuration to support TypeScript Project References.
+- Switched `typecheck` script to use `tsc --build` for reliable monorepo module resolution.
+
+## [0.2.3]
+
+### Added (0.2.3)
+
+- Initial production-aware authentication and session primitives.

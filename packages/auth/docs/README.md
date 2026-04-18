@@ -2,12 +2,6 @@
 
 This directory contains the operational and API guides for `@pureq/auth`.
 
-## Latest Update
-
-- Passkey (WebAuthn) support is now available in `@pureq/auth` via `passkeyProvider` and authenticator adapter methods.
-- OIDC stored-account token auto-refresh helpers are now available for provider token lifecycle operations.
-- See [Changelog](../CHANGELOG.md) for release details.
-
 ## Guides
 
 - [Package Overview](./auth_package.md)

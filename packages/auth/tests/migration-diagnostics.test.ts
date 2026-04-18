@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeAuthMigration,
-  extractValidCredentialIds,
   formatMigrationParityReport,
-  getAuthenticatorCredentialCollisionCheckQuery,
   generateMigrationChecklists,
 } from "../src/migration";
 
@@ -42,20 +40,5 @@ describe("migration diagnostics", () => {
 
     const checklists = generateMigrationChecklists(analysis);
     expect(checklists.rollback.length).toBeGreaterThan(0);
-  });
-
-  it("provides preflight query and extraction for authenticator credential ids", () => {
-    const sql = getAuthenticatorCredentialCollisionCheckQuery("postgres");
-    expect(sql).toContain("auth_authenticators");
-    expect(sql).toContain("GROUP BY credential_id");
-
-    const ids = extractValidCredentialIds([
-      { credential_id: "cred-1" },
-      { credentialId: "cred-2" },
-      { credential_id: "   " },
-      {},
-    ]);
-
-    expect(ids).toEqual(["cred-1", "cred-2"]);
   });
 });

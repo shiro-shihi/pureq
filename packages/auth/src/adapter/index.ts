@@ -1,7 +1,5 @@
 import type {
   AuthDatabaseAdapter,
-  AuthPasskeyCredential,
-  AuthPasswordCredential,
   AuthUser,
   AuthAccount,
   AuthPersistedSession,
@@ -17,6 +15,7 @@ export {
   createSqlAdapter,
   getSqlSchemaStatements,
 } from "./sql.js";
+export { createPureqDbAdapter, createAuthSchemas } from "./pureq.js";
 export type {
   MySqlClientLike,
   PostgresClientLike,
@@ -37,38 +36,11 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
   const accounts: AuthAccount[] = [];
   const sessions = new Map<string, { session: AuthPersistedSession; userId: string }>();
   const verificationTokens = new Map<string, AuthVerificationToken>();
-  const passwordCredentials = new Map<string, AuthPasswordCredential>();
-  const authenticators = new Map<string, AuthPasskeyCredential>();
   let userIdCounter = 0;
 
   const generateId = (): string => {
     userIdCounter += 1;
     return `user-${userIdCounter}-${Math.random().toString(36).slice(2, 8)}`;
-  };
-
-  const normalizeExpiresAt = (value: unknown): number | null => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (value instanceof Date) {
-      return Math.floor(value.getTime() / 1000);
-    }
-    return null;
-  };
-
-  const sameAccountSnapshot = (a: AuthAccount, b: AuthAccount): boolean => {
-    return (
-      a.userId === b.userId &&
-      a.type === b.type &&
-      a.provider === b.provider &&
-      a.providerAccountId === b.providerAccountId &&
-      (a.accessToken ?? null) === (b.accessToken ?? null) &&
-      (a.refreshToken ?? null) === (b.refreshToken ?? null) &&
-      normalizeExpiresAt(a.expiresAt) === normalizeExpiresAt(b.expiresAt) &&
-      (a.tokenType ?? null) === (b.tokenType ?? null) &&
-      (a.scope ?? null) === (b.scope ?? null) &&
-      (a.idToken ?? null) === (b.idToken ?? null)
-    );
   };
 
   return {
@@ -102,47 +74,6 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
       return users.get(account.userId) ?? null;
     },
 
-    async getAccount(provider, providerAccountId) {
-      const account = accounts.find(
-        (a) => a.provider === provider && a.providerAccountId === providerAccountId
-      );
-      return account ?? null;
-    },
-
-    async updateAccount(account) {
-      const idx = accounts.findIndex(
-        (a) => a.provider === account.provider && a.providerAccountId === account.providerAccountId
-      );
-      if (idx === -1) {
-        return null;
-      }
-      accounts[idx] = {
-        ...accounts[idx],
-        ...account,
-      };
-      return accounts[idx];
-    },
-
-    async updateAccountIfMatch(params) {
-      const idx = accounts.findIndex(
-        (a) => a.provider === params.next.provider && a.providerAccountId === params.next.providerAccountId
-      );
-      if (idx === -1) {
-        return null;
-      }
-
-      const current = accounts[idx]!;
-      if (!sameAccountSnapshot(current, params.expected)) {
-        return null;
-      }
-
-      accounts[idx] = {
-        ...current,
-        ...params.next,
-      };
-      return accounts[idx];
-    },
-
     async updateUser(user) {
       const existing = users.get(user.id);
       if (!existing) {
@@ -165,18 +96,8 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
     },
 
     async linkAccount(account) {
-      const existingIndex = accounts.findIndex(
-        (a) => a.provider === account.provider && a.providerAccountId === account.providerAccountId
-      );
-      if (existingIndex === -1) {
-        accounts.push(account);
-        return account;
-      }
-      accounts[existingIndex] = {
-        ...accounts[existingIndex],
-        ...account,
-      };
-      return accounts[existingIndex];
+      accounts.push(account);
+      return account;
     },
 
     async unlinkAccount(provider, providerAccountId) {
@@ -241,72 +162,7 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
       }
       return token;
     },
-
-    async setPasswordCredential(credential) {
-      const now = new Date();
-      const existing = passwordCredentials.get(credential.userId);
-      const next: AuthPasswordCredential = {
-        ...credential,
-        ...(existing?.createdAt ? { createdAt: existing.createdAt } : { createdAt: now }),
-        updatedAt: now,
-      };
-      passwordCredentials.set(credential.userId, next);
-      return next;
-    },
-
-    async getPasswordCredentialByUserId(userId) {
-      return passwordCredentials.get(userId) ?? null;
-    },
-
-    async deletePasswordCredential(userId) {
-      passwordCredentials.delete(userId);
-    },
-
-    async createAuthenticator(credential) {
-      authenticators.set(credential.credentialId, credential);
-      return credential;
-    },
-
-    async getAuthenticatorByCredentialId(credentialId) {
-      return authenticators.get(credentialId) ?? null;
-    },
-
-    async listAuthenticatorsByUserId(userId) {
-      const list: AuthPasskeyCredential[] = [];
-      for (const credential of authenticators.values()) {
-        if (credential.userId === userId) {
-          list.push(credential);
-        }
-      }
-      return list;
-    },
-
-    async updateAuthenticatorCounter(params) {
-      const current = authenticators.get(params.credentialId);
-      if (!current) {
-        return null;
-      }
-      const updated: AuthPasskeyCredential = {
-        ...current,
-        counter: params.counter,
-        ...(params.lastUsedAt ? { lastUsedAt: params.lastUsedAt } : {}),
-      };
-      authenticators.set(params.credentialId, updated);
-      return updated;
-    },
-
-    async deleteAuthenticator(credentialId) {
-      authenticators.delete(credentialId);
-    },
   };
 }
 
-export type {
-  AuthDatabaseAdapter,
-  AuthPasskeyCredential,
-  AuthPasswordCredential,
-  AuthUser,
-  AuthAccount,
-  AuthPersistedSession,
-  AuthVerificationToken,
-} from "../shared/index.js";
+export type { AuthDatabaseAdapter, AuthUser, AuthAccount, AuthPersistedSession, AuthVerificationToken } from "../shared/index.js";

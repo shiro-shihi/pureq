@@ -43,7 +43,7 @@ const describeValueType = (input: unknown): string => {
 export class ObjectSchema<TShape extends ObjectShape> implements PolicySchema<InferShape<TShape>> {
   declare readonly type: InferShape<TShape>;
 
-  private readonly shape: TShape;
+  readonly shape: TShape;
   readonly metadata: ValidationPolicy;
 
   constructor(shape: TShape, metadata: ValidationPolicy = DEFAULT_VALIDATION_POLICY) {

@@ -1,6 +1,6 @@
 {
   "name": "@pureq/validation",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Policy-ready validation primitives for pureq",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc --build tsconfig.json",
     "check:language-policy": "node ./scripts/check-language-policy.mjs docs src",
     "check:no-throw": "node ./scripts/check-no-throw.mjs src",
     "test": "vitest run --passWithNoTests",

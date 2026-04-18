@@ -66,13 +66,10 @@ Use @pureq/auth when you need one auth core with explicit policy boundaries, dep
 
 - credentialsProvider
 - emailProvider
-- passkeyProvider
 - createTopProviderPreset
 - listTopProviderPresets
 - createOIDCFlow
 - createOIDCFlowFromProvider
-- refreshOIDCAccountIfNeeded
-- refreshStoredOIDCAccountIfNeeded
 - oidcProviders
 - validateProviderCallbackContract
 - normalizeProviderError
@@ -202,8 +199,6 @@ const adapter = createPostgresAdapter(pgPool);
 const report = assessAdapterReadiness(adapter, {
   deployment: "production",
   requireEmailProviderSupport: true,
-  requirePasswordAuthSupport: true,
-  requirePasskeySupport: true,
 });
 
 if (report.status !== "ready") {
@@ -213,38 +208,6 @@ if (report.status !== "ready") {
 for (const sql of getSqlSchemaStatements("postgres")) {
   await pgPool.query(sql);
 }
-```
-
-## OIDC Token Auto Refresh
-
-Use these helpers when you store OAuth/OIDC provider tokens (for example, Google API calls on behalf of users).
-
-```ts
-import {
-  createOIDCFlowFromProvider,
-  oidcProviders,
-  refreshStoredOIDCAccountIfNeeded,
-} from "@pureq/auth";
-
-const flow = createOIDCFlowFromProvider(oidcProviders.google, {
-  clientId: process.env.GOOGLE_CLIENT_ID!,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  redirectUri: "https://app.example.com/auth/callback",
-});
-
-const refreshed = await refreshStoredOIDCAccountIfNeeded({
-  adapter,
-  provider: "google",
-  providerAccountId: "google-user-123",
-  flow,
-  refreshThresholdSeconds: 90,
-});
-
-if (!refreshed.account) {
-  throw new Error("linked provider account not found");
-}
-
-const accessToken = refreshed.account.accessToken;
 ```
 
 Versioned SQL templates are included in:

@@ -16,7 +16,7 @@ export interface AuthUser {
 /** Represents an OAuth/credentials account linked to a user. */
 export interface AuthAccount {
 	readonly userId: string;
-	readonly type: "oauth" | "oidc" | "credentials" | "email" | "webauthn";
+	readonly type: "oauth" | "oidc" | "credentials" | "email";
 	readonly provider: string;
 	readonly providerAccountId: string;
 	readonly accessToken?: string | null;
@@ -41,31 +41,6 @@ export interface AuthVerificationToken {
 	readonly expiresAt: Date;
 }
 
-/** Persisted password-auth credential metadata for first-party username/email + password auth. */
-export interface AuthPasswordCredential {
-	readonly userId: string;
-	readonly passwordHash: string;
-	readonly salt: string;
-	readonly algorithm: "pbkdf2-sha256" | "argon2id" | "scrypt";
-	readonly iterations?: number | null;
-	readonly createdAt?: Date;
-	readonly updatedAt?: Date;
-}
-
-/** Persisted WebAuthn authenticator metadata used for passkey sign-in. */
-export interface AuthPasskeyCredential {
-	readonly credentialId: string;
-	readonly userId: string;
-	readonly publicKey: string;
-	readonly counter: number;
-	readonly transports?: readonly string[];
-	readonly backedUp?: boolean;
-	readonly deviceType?: "singleDevice" | "multiDevice";
-	readonly aaguid?: string | null;
-	readonly createdAt?: Date;
-	readonly lastUsedAt?: Date | null;
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Database adapter (FEAT-H1)
 // ────────────────────────────────────────────────────────────────────────────
@@ -76,9 +51,6 @@ export interface AuthDatabaseAdapter {
 	getUser(id: string): Promise<AuthUser | null>;
 	getUserByEmail(email: string): Promise<AuthUser | null>;
 	getUserByAccount(provider: string, providerAccountId: string): Promise<AuthUser | null>;
-	getAccount?(provider: string, providerAccountId: string): Promise<AuthAccount | null>;
-	updateAccount?(account: AuthAccount): Promise<AuthAccount | null>;
-	updateAccountIfMatch?(params: { readonly expected: AuthAccount; readonly next: AuthAccount }): Promise<AuthAccount | null>;
 	updateUser(user: Partial<AuthUser> & { readonly id: string }): Promise<AuthUser>;
 	deleteUser?(id: string): Promise<void>;
 	linkAccount(account: AuthAccount): Promise<AuthAccount>;
@@ -89,18 +61,6 @@ export interface AuthDatabaseAdapter {
 	deleteSession(sessionToken: string): Promise<void>;
 	createVerificationToken?(token: AuthVerificationToken): Promise<AuthVerificationToken | null>;
 	useVerificationToken?(params: { readonly identifier: string; readonly token: string }): Promise<AuthVerificationToken | null>;
-	setPasswordCredential?(credential: AuthPasswordCredential): Promise<AuthPasswordCredential>;
-	getPasswordCredentialByUserId?(userId: string): Promise<AuthPasswordCredential | null>;
-	deletePasswordCredential?(userId: string): Promise<void>;
-	createAuthenticator?(credential: AuthPasskeyCredential): Promise<AuthPasskeyCredential>;
-	getAuthenticatorByCredentialId?(credentialId: string): Promise<AuthPasskeyCredential | null>;
-	listAuthenticatorsByUserId?(userId: string): Promise<readonly AuthPasskeyCredential[]>;
-	updateAuthenticatorCounter?(params: {
-		readonly credentialId: string;
-		readonly counter: number;
-		readonly lastUsedAt?: Date;
-	}): Promise<AuthPasskeyCredential | null>;
-	deleteAuthenticator?(credentialId: string): Promise<void>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -110,7 +70,7 @@ export interface AuthDatabaseAdapter {
 /** Base provider definition. */
 export interface AuthProvider {
 	readonly id: string;
-	readonly type: "oauth" | "oidc" | "credentials" | "email" | "webauthn";
+	readonly type: "oauth" | "oidc" | "credentials" | "email";
 	readonly name: string;
 }
 
@@ -130,90 +90,6 @@ export interface AuthEmailProviderOptions {
 		readonly url: string;
 		readonly token: string;
 	}) => Promise<void>;
-}
-
-export type AuthPasskeyChallengeFlow = "registration" | "authentication";
-
-export interface AuthPasskeyChallenge {
-	readonly challengeId: string;
-	readonly challenge: string;
-}
-
-export interface AuthPasskeyStoredChallenge extends AuthPasskeyChallenge {
-	readonly flow: AuthPasskeyChallengeFlow;
-	readonly userId?: string;
-	readonly expiresAt: number;
-}
-
-export interface AuthPasskeyRegistrationVerificationResult {
-	readonly verified: boolean;
-	readonly credential?: {
-		readonly credentialId: string;
-		readonly publicKey: string;
-		readonly counter: number;
-		readonly transports?: readonly string[];
-		readonly backedUp?: boolean;
-		readonly deviceType?: "singleDevice" | "multiDevice";
-		readonly aaguid?: string | null;
-	};
-}
-
-export interface AuthPasskeyAuthenticationVerificationResult {
-	readonly verified: boolean;
-	readonly credentialId?: string;
-	readonly newCounter?: number;
-	readonly userId?: string;
-}
-
-export interface AuthPasskeyProviderOptions {
-	readonly id?: string;
-	readonly name?: string;
-	readonly rpId: string;
-	readonly expectedOrigin: string;
-	readonly userVerification?: "required" | "preferred" | "discouraged";
-	readonly timeoutMs?: number;
-	readonly challengeTtlMs?: number;
-	/**
-	 * Optional external challenge store for multi-instance deployments.
-	 * If omitted, passkeyProvider uses an in-memory Map (single-process only).
-	 */
-	readonly challengeStore?: AuthPasskeyChallengeStore;
-	readonly createRegistrationOptions?: (params: {
-		readonly challenge: string;
-		readonly user: AuthUser;
-		readonly excludeCredentialIds: readonly string[];
-		readonly rpId: string;
-		readonly timeoutMs: number;
-		readonly userVerification: "required" | "preferred" | "discouraged";
-	}) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>;
-	readonly verifyRegistration: (params: {
-		readonly response: unknown;
-		readonly expectedChallenge: string;
-		readonly expectedOrigin: string;
-		readonly expectedRpId: string;
-		readonly user: AuthUser;
-	}) => Promise<AuthPasskeyRegistrationVerificationResult>;
-	readonly createAuthenticationOptions?: (params: {
-		readonly challenge: string;
-		readonly allowCredentialIds: readonly string[];
-		readonly rpId: string;
-		readonly timeoutMs: number;
-		readonly userVerification: "required" | "preferred" | "discouraged";
-	}) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>;
-	readonly verifyAuthentication: (params: {
-		readonly response: unknown;
-		readonly expectedChallenge: string;
-		readonly expectedOrigin: string;
-		readonly expectedRpId: string;
-		readonly authenticator: AuthPasskeyCredential;
-	}) => Promise<AuthPasskeyAuthenticationVerificationResult>;
-}
-
-export interface AuthPasskeyChallengeStore {
-	get(challengeId: string): AuthPasskeyStoredChallenge | null | Promise<AuthPasskeyStoredChallenge | null>;
-	set(challenge: AuthPasskeyStoredChallenge): void | Promise<void>;
-	delete(challengeId: string): void | Promise<void>;
-	cleanup?(nowMs: number): void | Promise<void>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -379,37 +255,6 @@ export interface OIDCProviderDefinition {
 export interface OIDCCallbackParams {
 	readonly code: string;
 	readonly state?: string;
-}
-
-export interface OIDCAccountAutoRefreshOptions {
-	readonly flow: Pick<OIDCFlow, "refresh">;
-	readonly refreshThresholdSeconds?: number;
-	readonly now?: () => number;
-	readonly onRefreshed?: (result: {
-		readonly previous: AuthAccount;
-		readonly next: AuthAccount;
-		readonly tokenResponse: TokenResponse;
-	}) => void | Promise<void>;
-	readonly onError?: (error: Error, account: AuthAccount) => void | Promise<void>;
-}
-
-export interface OIDCAccountAutoRefreshResult {
-	readonly account: AuthAccount;
-	readonly refreshed: boolean;
-	readonly tokenResponse?: TokenResponse;
-}
-
-export interface OIDCStoredAccountAutoRefreshOptions extends OIDCAccountAutoRefreshOptions {
-	readonly adapter: Pick<AuthDatabaseAdapter, "getAccount" | "updateAccount" | "updateAccountIfMatch">;
-	readonly provider: string;
-	readonly providerAccountId: string;
-}
-
-export interface OIDCStoredAccountAutoRefreshResult {
-	readonly account: AuthAccount | null;
-	readonly refreshed: boolean;
-	readonly conflict?: boolean;
-	readonly tokenResponse?: TokenResponse;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

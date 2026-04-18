@@ -34,37 +34,6 @@ export interface AuthMigrationAnalysis {
   readonly rollbackChecklist: readonly string[];
 }
 
-export type AuthSqlDialect = "postgres" | "mysql";
-
-export function getAuthenticatorCredentialCollisionCheckQuery(dialect: AuthSqlDialect): string {
-  if (dialect === "postgres") {
-    return "SELECT credential_id, COUNT(*) AS duplicate_count FROM auth_authenticators GROUP BY credential_id HAVING COUNT(*) > 1";
-  }
-  return "SELECT credential_id, COUNT(*) AS duplicate_count FROM auth_authenticators GROUP BY credential_id HAVING COUNT(*) > 1";
-}
-
-/**
- * Extracts and normalizes all valid credential_id values from a list of records.
- * Ignores empty/invalid values. Does not check for duplicates.
- */
-export function extractValidCredentialIds(
-  rows: readonly Readonly<{ readonly credential_id?: unknown; readonly credentialId?: unknown }>[],
-): readonly string[] {
-  const ids: string[] = [];
-  for (const row of rows) {
-    const raw = row.credential_id ?? row.credentialId;
-    if (typeof raw !== "string") {
-      continue;
-    }
-    const value = raw.trim();
-    if (!value) {
-      continue;
-    }
-    ids.push(value);
-  }
-  return ids;
-}
-
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null;
 }
@@ -200,7 +169,6 @@ export function analyzeAuthMigration(input: AuthMigrationAnalysisInput = {}): Au
     "Keep legacy token/session parser active behind feature flag",
     "Retain previous auth route handlers for one release window",
     "Gate AuthKit activation with environment toggle",
-    "Run credential_id duplicate preflight query against auth_authenticators before applying constraints",
     "Capture migration parity report in deployment artifact",
   ];
 

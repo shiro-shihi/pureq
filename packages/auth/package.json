@@ -127,7 +127,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @pureq/pureq run build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc --build tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:passkey-lifecycle:coverage": "vitest run -c vitest.passkey-lifecycle.config.ts",
     "test:redteam": "vitest run tests/auth-breaker.redteam.test.ts",
@@ -167,6 +167,7 @@
   },
   "devDependencies": {
     "@pureq/pureq": "workspace:*",
+    "@pureq/db": "workspace:*",
     "@types/node": "^24.5.2",
     "@vitest/coverage-v8": "^3.2.4",
     "typescript": "^6.0.2",
