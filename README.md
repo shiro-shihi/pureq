@@ -21,6 +21,16 @@ In practice this means:
 - runtime behavior expressed as reusable policy layers
 - security and operations treated as first-class design constraints
 
+## Ecosystem Strategy
+
+Pureq is evolving from a set of modular libraries into a **Policy-First Full-stack Framework**. Our roadmap includes:
+
+- **Zero-Trust Routing:** Automatically secure API endpoints using DB schemas.
+- **Unified Validation:** One contract from DB to UI.
+- **Edge-Native SSR:** Secure, redacted server-side rendering by default.
+
+Read more about our vision in the [Ecosystem Strategy & Roadmap](./docs/STRATEGY.md).
+
 ## Packages
 
 ### @pureq/pureq
@@ -142,6 +152,12 @@ pnpm add @pureq/auth
 pnpm add @pureq/validation
 pnpm add @pureq/db
 ```
+
+## Support
+
+If you find Pureq useful, consider supporting the project:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange.svg?style=flat-square&logo=buy-me-a-coffee)](https://buymeacoffee.com/shihiro)
 
 ## License
 
