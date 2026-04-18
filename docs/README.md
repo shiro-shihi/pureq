@@ -14,6 +14,12 @@ If you are browsing the repository from GitHub, use the package docs directly:
 - [JsonResult API Reference & Migration](../packages/pureq/docs/json_result_reference_and_migration.md)
 - [Benchmarks](../packages/pureq/docs/benchmarks.md)
 
+## Ecosystem Strategy
+
+Pureq is more than a set of libraries; it's a vision for secure, policy-driven development.
+
+- **[Strategy & Roadmap](./STRATEGY.md)**: Our path to `@pureq/server` and the Zero-Trust Full-stack Framework.
+
 ## Package Docs
 
 Welcome to the official documentation for **pureq**, the enterprise-grade transport layer for TypeScript.
