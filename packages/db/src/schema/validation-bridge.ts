@@ -19,10 +19,10 @@ export function columnToValidationSchema(
       schema = v.boolean() as PolicySchema<unknown>;
       break;
     case "date":
-      schema = v.guard((val): val is Date => val instanceof Date, "Date") as PolicySchema<unknown>;
+      schema = v.guard((val: unknown): val is Date => val instanceof Date, "Date") as PolicySchema<unknown>;
       break;
     case "json":
-      schema = v.guard((val): val is unknown => true, "JSON") as PolicySchema<unknown>;
+      schema = v.guard((val: unknown): val is unknown => true, "JSON") as PolicySchema<unknown>;
       break;
     default:
       throw new Error(`Unsupported column type: ${builder.type}`);
