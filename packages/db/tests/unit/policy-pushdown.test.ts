@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DB } from "../../src/core/db.js";
 import { table, column } from "../../src/schema/dsl.js";
 import type { Driver, QueryResult } from "../../src/drivers/types.js";
@@ -18,6 +18,10 @@ describe("Policy Push-down", () => {
 
   const db = new DB(mockDriver);
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("should filter columns based on user scopes (admin only)", async () => {
     await db
       .select()
@@ -27,7 +31,7 @@ describe("Policy Push-down", () => {
 
     // salary should be removed because user doesn't have 'hr' scope
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "SELECT id, name, email FROM users",
+      'SELECT "id", "name", "email" FROM "users"',
       []
     );
   });
@@ -41,7 +45,7 @@ describe("Policy Push-down", () => {
 
     // email should be removed because user doesn't have 'admin' scope
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "SELECT id, name, salary FROM users",
+      'SELECT "id", "name", "salary" FROM "users"',
       []
     );
   });
@@ -54,7 +58,7 @@ describe("Policy Push-down", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "SELECT id, name, email, salary FROM users",
+      'SELECT "id", "name", "email", "salary" FROM "users"',
       []
     );
   });
@@ -68,7 +72,7 @@ describe("Policy Push-down", () => {
 
     // email should be filtered out even if explicitly requested, if no scope matches
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "SELECT id, name FROM users",
+      'SELECT "name" FROM "users"',
       []
     );
   });

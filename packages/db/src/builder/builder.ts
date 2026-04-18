@@ -6,6 +6,7 @@ import { toValidationSchema } from "../schema/validation-bridge.js";
 import type { SelectStatement, InsertStatement, UpdateStatement, DeleteStatement, Expression, Join } from "./ast.js";
 import { GenericCompiler } from "./compiler.js";
 import type { QueryContext } from "../types/context.js";
+import { validateIdentifier, isCircular, validateOperator, validateExpression } from "./utils.js";
 
 export type JoinResult<TBase extends Table<any, any>, TJoined extends Record<string, Table<any, any>>> = 
   InferSelect<TBase> & {
@@ -45,9 +46,13 @@ export class SelectBuilder<
 
   select(columns: string[] | "*"): SelectBuilder<TBase, TJoined> {
     if (Array.isArray(columns)) {
-        columns.forEach(c => validateString(c, "Column"));
+        columns.forEach(c => {
+          validateString(c, "Column");
+          validateIdentifier(c);
+        });
     } else if (columns !== "*") {
         validateString(columns, "Columns");
+        validateIdentifier(columns);
     }
     this.statement.columns = columns;
     return this;
@@ -59,10 +64,13 @@ export class SelectBuilder<
     on: (cols: { base: TBase; joined: T }) => Expression
   ): SelectBuilder<TBase, TJoined & { [P in K]: T }> {
     validateString(alias, "Alias");
+    validateIdentifier(alias);
+    const joinExpr = on({ base: this.tableObj as any, joined: table });
+    validateExpression(joinExpr);
     const join: Join = {
       type: "inner",
       table: table.name,
-      on: on({ base: this.tableObj as any, joined: table }),
+      on: joinExpr,
     };
     this.statement.joins!.push(join);
     (this.joinedTables as any)[alias] = table;
@@ -71,8 +79,14 @@ export class SelectBuilder<
 
   where(column: string, operator: string, value: unknown): SelectBuilder<TBase, TJoined> {
     validateString(column, "Column");
+    validateIdentifier(column);
     validateString(operator, "Operator");
+    validateOperator(operator);
     
+    if (isCircular(value)) {
+      throw new Error("Security Exception: Circular reference detected in literal value");
+    }
+
     const newExpr: Expression = {
       type: "binary",
       left: { type: "column", name: column },
@@ -99,6 +113,7 @@ export class SelectBuilder<
 
   orderBy(column: string, direction: "ASC" | "DESC" = "ASC"): SelectBuilder<TBase, TJoined> {
     validateString(column, "Column");
+    validateIdentifier(column);
     validateString(direction, "Direction");
     if (!this.statement.orderBy) {
       this.statement.orderBy = [];
@@ -108,13 +123,13 @@ export class SelectBuilder<
   }
 
   limit(limit: number): SelectBuilder<TBase, TJoined> {
-    if (typeof limit !== "number" || isNaN(limit)) throw new Error("Limit must be a valid number");
+    if (typeof limit !== "number" || isNaN(limit)) throw new Error("Security Exception: Limit must be a valid number");
     this.statement.limit = limit;
     return this;
   }
 
   offset(offset: number): SelectBuilder<TBase, TJoined> {
-    if (typeof offset !== "number" || isNaN(offset)) throw new Error("Offset must be a valid number");
+    if (typeof offset !== "number" || isNaN(offset)) throw new Error("Security Exception: Offset must be a valid number");
     this.statement.offset = offset;
     return this;
   }
@@ -206,10 +221,20 @@ export class SelectBuilder<
        }
     }
 
-    // Column-Level Security (CLS) - Only if statement.columns is array or *
-    // For joined tables, CLS is harder because they are usually selected via alias or *,
-    // but we ensure that if we select *, we respect the policy.
-    // (Actual implementation would need to handle multi-table * select more precisely)
+    // Column-Level Security (CLS)
+    const allowedColumns = Object.entries(table.columns)
+        .filter(([_, col]) => {
+            const policy = (col as any).options?.policy;
+            if (!policy || !policy.scope || policy.scope.length === 0) return true;
+            return policy.scope.some((s: string) => userScopes.has(s));
+        })
+        .map(([name]) => name);
+
+    if (statement.columns === "*") {
+        statement.columns = allowedColumns;
+    } else if (Array.isArray(statement.columns)) {
+        statement.columns = statement.columns.filter(c => allowedColumns.includes(c));
+    }
   }
 }
 
@@ -240,7 +265,9 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
   }
   where(column: string, operator: string, value: unknown): UpdateBuilder<TTable> {
     validateString(column, "Column");
+    validateIdentifier(column);
     validateString(operator, "Operator");
+    validateOperator(operator);
     const newExpr: Expression = {
       type: "binary",
       left: { type: "column", name: column },
@@ -268,7 +295,9 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
   }
   where(column: string, operator: string, value: unknown): DeleteBuilder<TTable> {
     validateString(column, "Column");
+    validateIdentifier(column);
     validateString(operator, "Operator");
+    validateOperator(operator);
     const newExpr: Expression = {
       type: "binary",
       left: { type: "column", name: column },

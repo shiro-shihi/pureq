@@ -31,10 +31,12 @@ describe("MigrationManager", () => {
     const migrations: Migration[] = [
       {
         id: "20240101_init",
+        timestamp: 1,
         up: vi.fn().mockResolvedValue(undefined),
       },
       {
         id: "20240102_add_profile",
+        timestamp: 2,
         up: vi.fn().mockResolvedValue(undefined),
       }
     ];
@@ -44,12 +46,12 @@ describe("MigrationManager", () => {
     expect(migrations[0].up).toHaveBeenCalled();
     expect(migrations[1].up).toHaveBeenCalled();
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      expect.stringContaining("INSERT INTO _pureq_migrations"),
-      ["20240101_init"]
+      "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)",
+      ["20240101_init", 1]
     );
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      expect.stringContaining("INSERT INTO _pureq_migrations"),
-      ["20240102_add_profile"]
+      "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)",
+      ["20240102_add_profile", 2]
     );
   });
 
@@ -64,10 +66,12 @@ describe("MigrationManager", () => {
     const migrations: Migration[] = [
       {
         id: "20240101_init",
+        timestamp: 1,
         up: vi.fn().mockResolvedValue(undefined),
       },
       {
         id: "20240102_add_profile",
+        timestamp: 2,
         up: vi.fn().mockResolvedValue(undefined),
       }
     ];

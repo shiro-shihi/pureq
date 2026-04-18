@@ -5,8 +5,8 @@ import type { Table } from "../schema/dsl.js";
 export class DB {
   constructor(public readonly driver: Driver) {}
 
-  select() {
-    return new SelectBuilder(this);
+  select(columns: string[] | "*" = "*") {
+    return new SelectBuilder(this).select(columns);
   }
 
   insert<T extends Table<any, any>>(table: T) {

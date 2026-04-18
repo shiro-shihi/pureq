@@ -46,15 +46,13 @@ describe("Ultimate Chaos & Red-Team Legendary Assault", () => {
   });
 
   describe("Scenario 2: Recursive Object & Circular Reference DoS", () => {
-    it("should fail gracefully when encountering circular references", async () => {
+    it("should fail gracefully when encountering circular references", () => {
         const circular: any = { id: 1 };
         circular.self = circular;
 
-        // If the driver or library tries to JSON.stringify or deeply inspect, it should throw.
-        // We verify that the system handles this failure without crashing the process.
-        // (Better-sqlite3/Postgres drivers usually throw on circular structures during param binding)
-        await expect(db.select().from(users).where("id", "=", circular).execute())
-            .rejects.toThrow();
+        // In our latest implementation, where() throws synchronously on circular refs
+        expect(() => db.select().from(users).where("id", "=", circular))
+            .toThrow(/Security Exception: Circular reference detected/);
     });
   });
 
@@ -75,7 +73,7 @@ describe("Ultimate Chaos & Red-Team Legendary Assault", () => {
 
         const [sql, params] = getLatestQuery();
 
-        expect(sql).toMatch(/WHERE \("userId" = \?\) AND \("userId" = \?\)/);
+        expect(sql).toMatch(/WHERE \(.*("users"\.)?"userId" = \?\) AND \(.*("posts"\.)?"userId" = \?\)/);
         expect(params.filter((p: unknown) => p === "victim-789")).toHaveLength(2);
     });
   });

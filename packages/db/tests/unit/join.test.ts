@@ -35,7 +35,7 @@ describe("Query Builder - JOIN", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "SELECT * FROM users INNER JOIN posts ON (users.id = posts.userId)",
+      'SELECT * FROM "users" INNER JOIN "posts" ON ("users"."id" = "posts"."userId")',
       []
     );
   });

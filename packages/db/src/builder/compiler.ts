@@ -1,3 +1,4 @@
+import { IDENTIFIER_REGEX, CONTROL_CHARS_REGEX, validateIdentifier, validateOperator, validateFunctionName } from "./utils.js";
 import type {
   SelectStatement,
   InsertStatement,
@@ -7,22 +8,9 @@ import type {
   Join,
 } from "./ast.js";
 
-const ALLOWED_OPERATORS = new Set([
-  "=", "!=", "<", "<=", ">", ">=", "LIKE", "ILIKE", "IN", "NOT IN", "IS", "IS NOT", "AND", "OR"
-]);
-
-const IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-const CONTROL_CHARS_REGEX = /[\0\n\r\t\x08\x1a]/;
-
 export class GenericCompiler {
   private validateIdentifier(name: string): void {
-    if (CONTROL_CHARS_REGEX.test(name)) {
-      throw new Error(`Security Exception: Control characters detected in identifier`);
-    }
-    // Strict regex check also effectively blocks NFKC-normalized dangerous chars (like full-width space)
-    if (!IDENTIFIER_REGEX.test(name)) {
-      throw new Error(`Security Exception: Invalid identifier "${name}". Only alphanumeric and underscores are allowed.`);
-    }
+    validateIdentifier(name);
   }
 
   private quoteIdentifier(name: string): string {
@@ -31,11 +19,7 @@ export class GenericCompiler {
   }
 
   private validateOperator(operator: string): string {
-    const upperOp = operator.toUpperCase();
-    if (!ALLOWED_OPERATORS.has(upperOp)) {
-      throw new Error(`Security Exception: Disallowed SQL operator "${operator}"`);
-    }
-    return upperOp;
+    return validateOperator(operator);
   }
 
   compileSelect(statement: SelectStatement): { sql: string; params: unknown[] } {
@@ -147,6 +131,34 @@ export class GenericCompiler {
   }
 
   private compileExpression(expr: Expression): { sql: string; params: unknown[] } {
+    // Quality Improvement: Use iterative approach for flat binary chains (OR/AND) to prevent stack overflow
+    if (expr.type === "binary" && (expr.operator === "OR" || expr.operator === "AND")) {
+        const parts: string[] = [];
+        const params: unknown[] = [];
+        const op = expr.operator;
+        let current: Expression = expr;
+        const stack: Expression[] = [];
+
+        // Flatten left-heavy trees
+        while (current.type === "binary" && current.operator === op) {
+            stack.push(current.right);
+            current = current.left;
+        }
+        stack.push(current);
+
+        while (stack.length > 0) {
+            const node = stack.pop()!;
+            const compiled = this.compileExpression(node);
+            parts.push(compiled.sql);
+            params.push(...compiled.params);
+        }
+
+        return {
+            sql: `(${parts.join(` ${op} `)})`,
+            params
+        };
+    }
+
     switch (expr.type) {
       case "column": {
         const col = this.quoteIdentifier(expr.name);
@@ -160,10 +172,17 @@ export class GenericCompiler {
       case "binary": {
         const op = this.validateOperator(expr.operator);
         
-        // Quality Improvement: Handle empty IN clauses safely (e.g. id IN () -> 1 = 0)
         if (op === "IN" || op === "NOT IN") {
-          if (expr.right.type === "literal" && Array.isArray(expr.right.value) && expr.right.value.length === 0) {
-            return { sql: op === "IN" ? "(1 = 0)" : "(1 = 1)", params: [] };
+          if (expr.right.type === "literal" && Array.isArray(expr.right.value)) {
+            if (expr.right.value.length === 0) {
+              return { sql: op === "IN" ? "(1 = 0)" : "(1 = 1)", params: [] };
+            }
+            const left = this.compileExpression(expr.left);
+            const placeholders = expr.right.value.map(() => "?").join(", ");
+            return {
+              sql: `(${left.sql} ${op} (${placeholders}))`,
+              params: [...left.params, ...expr.right.value],
+            };
           }
         }
 
@@ -175,13 +194,10 @@ export class GenericCompiler {
         };
       }
       case "function": {
-        const functionNameRegex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-        if (!functionNameRegex.test(expr.name)) {
-          throw new Error(`Security Exception: Disallowed function name "${expr.name}"`);
-        }
+        validateFunctionName(expr.name);
         const args = expr.args.map((a) => this.compileExpression(a));
         return {
-          sql: `${expr.name}(${args.map((a) => a.sql).join(", ")})`,
+          sql: `${expr.name.toUpperCase()}(${args.map((a) => a.sql).join(", ")})`,
           params: args.flatMap((a) => a.params),
         };
       }
