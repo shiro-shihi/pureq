@@ -1,5 +1,5 @@
 export type Expression =
-  | { type: "column"; name: string; table?: string }
+  | { type: "column"; name: string; table?: string | undefined }
   | { type: "literal"; value: unknown }
   | { type: "binary"; left: Expression; operator: string; right: Expression }
   | { type: "function"; name: string; args: Expression[] };
@@ -14,13 +14,13 @@ export interface SelectStatement {
   type: "select";
   table: string;
   columns: (string | Expression)[] | "*";
-  joins?: Join[];
-  where?: Expression;
-  groupBy?: string[];
-  having?: Expression;
-  limit?: number;
-  offset?: number;
-  orderBy?: { column: string; direction: "ASC" | "DESC" }[];
+  joins?: Join[] | undefined;
+  where?: Expression | undefined;
+  groupBy?: string[] | undefined;
+  having?: Expression | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+  orderBy?: { column: string; direction: "ASC" | "DESC" }[] | undefined;
 }
 
 export interface InsertStatement {
@@ -33,13 +33,13 @@ export interface UpdateStatement {
   type: "update";
   table: string;
   values: Record<string, unknown>;
-  where?: Expression;
+  where?: Expression | undefined;
 }
 
 export interface DeleteStatement {
   type: "delete";
   table: string;
-  where?: Expression;
+  where?: Expression | undefined;
 }
 
 export type Statement =

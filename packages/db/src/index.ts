@@ -3,6 +3,7 @@ export * from "./builder/builder.js";
 export * from "./builder/ast.js";
 export * from "./builder/compiler.js";
 export * from "./builder/utils.js";
+export * from "./builder/expressions.js";
 export * from "./schema/dsl.js";
 export * from "./schema/inference.js";
 export * from "./schema/validation-bridge.js";

@@ -33,9 +33,20 @@ export class GenericCompiler {
         } else {
           const compiled = this.compileExpression(c);
           params.push(...compiled.params);
-          return compiled.sql;
+          let sql = compiled.sql;
+          
+          // If it's a simple column with a table prefix in a join context, 
+          // add an alias to help with structured result mapping.
+          if (c.type === "column" && c.table && (statement.joins?.length ?? 0) > 0) {
+            sql += ` AS ${this.quoteIdentifier(`__${c.table}__${c.name}`)}`;
+          }
+          
+          return sql;
         }
       }).join(", ");
+    } else if (statement.columns === "*") {
+       // If it's a join query with *, we might want to expand columns manually to avoid name collisions.
+       // However, for simplicity in this iteration, we rely on the builder passing explicit columns if it needs structuring.
     } else if (statement.columns !== "*") {
        throw new Error(`Security Exception: Invalid columns format`);
     }
@@ -212,6 +223,23 @@ export class GenericCompiler {
         };
       }
       case "function": {
+        const funcName = expr.name.toUpperCase();
+        if (funcName === "JSON_EXTRACT") {
+            const compiledArgs = expr.args.map((a) => this.compileExpression(a));
+            const col = compiledArgs[0];
+            const path = compiledArgs[1];
+
+            if (!col || !path) {
+                throw new Error("Security Exception: JSON_EXTRACT requires exactly 2 arguments");
+            }
+
+            // Default to PostgreSQL ->> operator for this generic implementation
+            // In a more mature version, this would check the current dialect.
+            return {
+                sql: `(${col.sql} ->> ${path.sql})`,
+                params: [...col.params, ...path.params]
+            };
+        }
         validateFunctionName(expr.name);
         const args = expr.args.map((a) => this.compileExpression(a));
         return {

@@ -6,16 +6,28 @@ export const ALLOWED_OPERATORS = new Set([
 ]);
 
 export const ALLOWED_FUNCTIONS = new Set([
-  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "LOWER", "UPPER", "NOW", "DATE", "SUBSTR", "SUBSTRING"
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "LOWER", "UPPER", "NOW", "DATE", "SUBSTR", "SUBSTRING", "JSON_EXTRACT"
 ]);
 
 export function validateIdentifier(name: string): void {
+  if (typeof name !== "string") {
+    throw new Error(`Security Exception: Identifier must be a string, got ${typeof name}`);
+  }
+
   if (CONTROL_CHARS_REGEX.test(name)) {
     throw new Error(`Security Exception: Control characters detected in identifier`);
   }
-  // Strict regex check also effectively blocks NFKC-normalized dangerous chars (like full-width space)
-  if (!IDENTIFIER_REGEX.test(name)) {
-    throw new Error(`Security Exception: Invalid identifier "${name}". Only alphanumeric and underscores are allowed.`);
+
+  // Unicode Homograph Attack prevention:
+  // Normalize to NFKC and check if it still matches the strict ASCII regex.
+  // This prevents cases where a character might be normalized into a quote or semicolon.
+  const normalized = name.normalize("NFKC");
+  if (normalized !== name) {
+    throw new Error(`Security Exception: Potential Unicode normalization bypass detected in identifier "${name}"`);
+  }
+
+  if (!IDENTIFIER_REGEX.test(normalized)) {
+    throw new Error(`Security Exception: Invalid identifier "${name}". Only alphanumeric and underscores are allowed (ASCII only).`);
   }
 }
 
