@@ -1,4 +1,4 @@
-import { table, column, DB } from "@pureq/db";
+import { table, column, DB, Table } from "@pureq/db";
 import type {
   AuthDatabaseAdapter,
   AuthUser,
@@ -98,7 +98,7 @@ export function createPureqDbAdapter(db: DB, tableNames?: Parameters<typeof crea
     async getUserByAccount(provider, providerAccountId) {
         const rows = await db.select()
             .from(users)
-            .innerJoin("a", accounts, ({ base, joined }) => ({
+            .innerJoin("a", accounts, ({ base, joined }: { base: Table<any, any>, joined: Table<any, any> }) => ({
                 type: "binary",
                 left: { type: "column", name: "id", table: users.name },
                 operator: "=",
@@ -120,13 +120,14 @@ export function createPureqDbAdapter(db: DB, tableNames?: Parameters<typeof crea
     },
 
     async updateUser(user) {
+        const updateData: any = {};
+        if (user.email !== undefined) updateData.email = user.email;
+        if (user.emailVerified !== undefined) updateData.email_verified = user.emailVerified;
+        if (user.name !== undefined) updateData.name = user.name;
+        if (user.image !== undefined) updateData.image = user.image;
+
         await db.update(users)
-            .set({
-                email: user.email,
-                email_verified: user.emailVerified,
-                name: user.name,
-                image: user.image
-            })
+            .set(updateData)
             .where("id", "=", user.id)
             .execute();
         return this.getUser(user.id) as Promise<AuthUser>;
@@ -187,20 +188,22 @@ export function createPureqDbAdapter(db: DB, tableNames?: Parameters<typeof crea
     },
 
     async updateSession(session) {
+        const updateData: any = {};
+        if (session.expiresAt !== undefined) updateData.expires_at = session.expiresAt;
+        if (session.userId !== undefined) updateData.user_id = session.userId;
+
         await db.update(sessions)
-            .set({
-                expires_at: session.expiresAt,
-                user_id: session.userId
-            })
+            .set(updateData)
             .where("session_token", "=", session.sessionToken)
             .execute();
         
         const rows = await db.select().from(sessions).where("session_token", "=", session.sessionToken).limit(1).execute();
-        if (!rows[0]) return null;
+        const row = rows[0];
+        if (!row) return null;
         return {
-            sessionToken: rows[0].session_token,
-            userId: rows[0].user_id,
-            expiresAt: rows[0].expires_at
+            sessionToken: row.session_token,
+            userId: row.user_id,
+            expiresAt: row.expires_at
         };
     },
 
@@ -209,7 +212,11 @@ export function createPureqDbAdapter(db: DB, tableNames?: Parameters<typeof crea
     },
 
     async createVerificationToken(token) {
-        await db.insert(verificationTokens).values(token).execute();
+        await db.insert(verificationTokens).values({
+            identifier: token.identifier,
+            token: token.token,
+            expires_at: token.expiresAt
+        }).execute();
         return token;
     },
 
@@ -219,14 +226,19 @@ export function createPureqDbAdapter(db: DB, tableNames?: Parameters<typeof crea
             .where("token", "=", params.token)
             .execute();
         
-        const token = rows[0];
-        if (!token) return null;
+        const row = rows[0];
+        if (!row) return null;
 
         await db.delete(verificationTokens)
           .where("identifier", "=", params.identifier)
           .where("token", "=", params.token)
           .execute();
-        return token as AuthVerificationToken;
+        
+        return {
+            identifier: row.identifier,
+            token: row.token,
+            expiresAt: row.expires_at
+        } as AuthVerificationToken;
     },
   };
 }

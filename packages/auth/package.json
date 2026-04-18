@@ -166,6 +166,7 @@
   },
   "devDependencies": {
     "@pureq/pureq": "workspace:*",
+    "@pureq/db": "workspace:*",
     "@types/node": "^24.5.2",
     "typescript": "^6.0.2",
     "vitest": "^3.2.4"

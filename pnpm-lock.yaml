@@ -14,6 +14,9 @@ importers:
 
   packages/auth:
     devDependencies:
+      '@pureq/db':
+        specifier: workspace:*
+        version: link:../db
       '@pureq/pureq':
         specifier: workspace:*
         version: link:../pureq
