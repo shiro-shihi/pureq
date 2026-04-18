@@ -1,6 +1,6 @@
 {
   "name": "@pureq/auth",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Authentication and token management middleware for pureq",
   "type": "module",
   "main": "./dist/index.js",
@@ -129,6 +129,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --build tsconfig.json",
     "test": "vitest run --passWithNoTests",
+    "test:passkey-lifecycle:coverage": "vitest run -c vitest.passkey-lifecycle.config.ts",
     "test:redteam": "vitest run tests/auth-breaker.redteam.test.ts",
     "test:watch": "vitest",
     "test:heavy": "vitest run tests/auth-assault.heavy.test.ts tests/auth-chaos.heavy.test.ts tests/auth-defense-saturation.heavy.test.ts tests/auth-bank-gafam.assault.heavy.test.ts tests/auth-adversarial-zero-day.heavy.test.ts",
@@ -168,6 +169,7 @@
     "@pureq/pureq": "workspace:*",
     "@pureq/db": "workspace:*",
     "@types/node": "^24.5.2",
+    "@vitest/coverage-v8": "^3.2.4",
     "typescript": "^6.0.2",
     "vitest": "^3.2.4"
   }
