@@ -8,6 +8,7 @@ import { GenericCompiler } from "./compiler.js";
 import type { QueryContext } from "../types/context.js";
 import { validateIdentifier, isCircular, validateOperator, validateExpression } from "./utils.js";
 import { type QuerySpan } from "../types/diagnostics.js";
+import { op } from "./expressions.js";
 
 export type JoinResult<TBase extends Table<any, any>, TJoined extends Record<string, Table<any, any>>> = 
   InferSelect<TBase> & {
@@ -367,7 +368,7 @@ export class SelectBuilder<
     
     // 1. Generic Table Policy (Priority)
     if (table.options.policy?.rls && this.context) {
-      const genericFilter = table.options.policy.rls(this.context);
+      const genericFilter = table.options.policy.rls(this.context, op);
       this.addWhere(statement, genericFilter);
     } 
     // 2. Legacy/Convenience Default userId Policy

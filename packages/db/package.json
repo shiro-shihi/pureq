@@ -1,6 +1,6 @@
 {
   "name": "@pureq/db",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Native-first, validation-integrated DB driver and query builder for Pureq",
   "type": "module",
   "main": "./dist/index.js",

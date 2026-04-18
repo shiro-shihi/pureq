@@ -1,5 +1,6 @@
 import type { Expression } from "../builder/ast.js";
 import type { QueryContext } from "../types/context.js";
+import type { op } from "../builder/expressions.js";
 
 export type ColumnType =
   | "string"
@@ -134,7 +135,7 @@ export interface RelationDefinition {
 
 export interface TableOptions {
   policy?: {
-    rls?: (ctx: QueryContext) => Expression;
+    rls?: (ctx: QueryContext, helpers: typeof op) => Expression;
   };
   relations?: Record<string, RelationDefinition>;
 }

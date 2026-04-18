@@ -10,18 +10,13 @@ describe("Generic Row-Level Security (RLS)", () => {
   };
   const db = new DB(mockDriver);
 
-  it("should apply generic RLS policy from table options", async () => {
+  it("should apply generic RLS policy from table options using helpers", async () => {
     const orgs = table("organizations", {
       id: column.number().primary(),
       name: column.string(),
     }, {
       policy: {
-        rls: (ctx) => ({
-          type: "binary",
-          left: { type: "column", name: "id" },
-          operator: "=",
-          right: { type: "literal", value: ctx.orgId }
-        })
+        rls: (ctx, { eq }) => eq("id", ctx.orgId)
       }
     });
 
