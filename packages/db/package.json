@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc --build tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:unit": "vitest run tests --passWithNoTests"

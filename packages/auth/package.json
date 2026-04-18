@@ -127,7 +127,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @pureq/pureq run build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc --build tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:redteam": "vitest run tests/auth-breaker.redteam.test.ts",
     "test:watch": "vitest",

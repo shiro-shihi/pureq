@@ -17,14 +17,7 @@
     "verbatimModuleSyntax": true,
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": {
-      "@pureq/pureq": ["packages/pureq/src/index.ts"],
-      "@pureq/auth": ["packages/auth/src/index.ts"],
-      "@pureq/validation": ["packages/validation/src/index.ts"],
-      "@pureq/db": ["packages/db/src/index.ts"]
-    }
+    "ignoreDeprecations": "6.0"
   },
   "include": [],
   "references": [
