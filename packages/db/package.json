@@ -23,7 +23,10 @@
     "typecheck": "tsc --build tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:unit": "vitest run tests --passWithNoTests"
+    "test:unit": "vitest run tests/unit --passWithNoTests",
+    "test:integration": "vitest run tests/integration --passWithNoTests",
+    "test:security": "vitest run tests/security --passWithNoTests",
+    "test:ci": "pnpm run test:unit && pnpm run test:integration && pnpm run test:security && pnpm run typecheck"
   },
   "keywords": [
     "database",
