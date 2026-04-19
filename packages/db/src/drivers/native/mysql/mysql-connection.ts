@@ -104,6 +104,8 @@ export class MysqlConnection {
     }
   }
 
+  private static readonly MAX_STATEMENTS = 1000;
+
   private async prepareStatement(sql: string): Promise<{ id: number, fields: MysqlField[] }> {
     const cached = this.statementCache.get(sql);
     if (cached) return cached;
@@ -140,6 +142,14 @@ export class MysqlConnection {
     }
 
     const result = { id: stmtId, fields };
+    
+    if (this.statementCache.size >= MysqlConnection.MAX_STATEMENTS) {
+        const oldestKey = this.statementCache.keys().next().value;
+        if (oldestKey !== undefined) {
+            this.statementCache.delete(oldestKey);
+        }
+    }
+    
     this.statementCache.set(sql, result);
     return result;
   }
@@ -200,26 +210,54 @@ export class MysqlConnection {
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i]!;
       const idx = Math.floor((i + 2) / 8);
+      if (1 + idx >= rawData.length) throw new Error("Row data truncated (null bitmap)");
       const isNull = (rawData[1 + idx]! & (1 << ((i + 2) % 8))) !== 0;
       if (isNull) {
         row[field.name] = null;
         continue;
       }
-      switch (field.type) {
-        case MYSQL_TYPES.TINY: row[field.name] = view.getInt8(current); current += 1; break;
-        case MYSQL_TYPES.SHORT:
-        case MYSQL_TYPES.YEAR: row[field.name] = view.getInt16(current, true); current += 2; break;
-        case MYSQL_TYPES.INT24:
-        case MYSQL_TYPES.LONG: row[field.name] = view.getInt32(current, true); current += 4; break;
-        case MYSQL_TYPES.LONGLONG: row[field.name] = Number(view.getBigInt64(current, true)); current += 8; break;
-        case MYSQL_TYPES.FLOAT: row[field.name] = view.getFloat32(current, true); current += 4; break;
-        case MYSQL_TYPES.DOUBLE: row[field.name] = view.getFloat64(current, true); current += 8; break;
-        default: {
-          const { value: len, length: lenBytes } = (this.protocol as any).readLenEnc(rawData, current);
-          const str = new TextDecoder().decode(rawData.slice(current + lenBytes, current + lenBytes + Number(len)));
-          row[field.name] = field.type === MYSQL_TYPES.JSON ? JSON.parse(str) : str;
-          current += lenBytes + Number(len);
-          break;
+      
+      const type = field.type;
+      // Fast-path for fixed-length types
+      if (type === MYSQL_TYPES.LONG) {
+        if (current + 4 > rawData.length) throw new Error("Row data truncated (LONG)");
+        row[field.name] = view.getInt32(current, true); current += 4;
+      } else if (type === MYSQL_TYPES.VAR_STRING || type === MYSQL_TYPES.STRING || type === MYSQL_TYPES.VARCHAR) {
+        const { value: len, length: lenBytes } = (this.protocol as any).readLenEnc(rawData, current);
+        const l = Number(len);
+        if (current + lenBytes + l > rawData.length) throw new Error("Row data truncated (string)");
+        row[field.name] = this.protocol.decodeString(rawData, current + lenBytes, l);
+        current += lenBytes + l;
+      } else if (type === MYSQL_TYPES.TINY) {
+        if (current + 1 > rawData.length) throw new Error("Row data truncated (TINY)");
+        row[field.name] = view.getInt8(current); current += 1;
+      } else {
+        // Fallback for other types
+        switch (type) {
+          case MYSQL_TYPES.SHORT:
+          case MYSQL_TYPES.YEAR: 
+            if (current + 2 > rawData.length) throw new Error("Row data truncated (SHORT/YEAR)");
+            row[field.name] = view.getInt16(current, true); current += 2; break;
+          case MYSQL_TYPES.INT24:
+            if (current + 4 > rawData.length) throw new Error("Row data truncated (INT24)");
+            row[field.name] = view.getInt32(current, true); current += 4; break;
+          case MYSQL_TYPES.LONGLONG: 
+            if (current + 8 > rawData.length) throw new Error("Row data truncated (LONGLONG)");
+            row[field.name] = Number(view.getBigInt64(current, true)); current += 8; break;
+          case MYSQL_TYPES.FLOAT: 
+            if (current + 4 > rawData.length) throw new Error("Row data truncated (FLOAT)");
+            row[field.name] = view.getFloat32(current, true); current += 4; break;
+          case MYSQL_TYPES.DOUBLE: 
+            if (current + 8 > rawData.length) throw new Error("Row data truncated (DOUBLE)");
+            row[field.name] = view.getFloat64(current, true); current += 8; break;
+          default: {
+            const { value: len, length: lenBytes } = (this.protocol as any).readLenEnc(rawData, current);
+            if (current + lenBytes + Number(len) > rawData.length) throw new Error("Row data truncated (fallback)");
+            const str = this.protocol.decodeString(rawData, current + lenBytes, Number(len));
+            row[field.name] = type === MYSQL_TYPES.JSON ? JSON.parse(str) : str;
+            current += lenBytes + Number(len);
+            break;
+          }
         }
       }
     }
@@ -291,11 +329,18 @@ export class MysqlConnection {
     await this.socket.write(this.protocol.createPacket(payload, this.sequenceId++));
   }
 
+  private static readonly MAX_PACKET_SIZE = 16 * 1024 * 1024; // 16MB
+
   private async readPacket(): Promise<MysqlPacket> {
     while (true) {
       if (this.reader.length >= 4) {
         const header = this.reader.peek(4)!;
         const length = (header[0]! | (header[1]! << 8) | (header[2]! << 16));
+        
+        if (length > MysqlConnection.MAX_PACKET_SIZE) {
+            throw new Error(`MySQL packet too large: ${length} bytes. Max allowed: ${MysqlConnection.MAX_PACKET_SIZE}`);
+        }
+        
         if (this.reader.length >= length + 4) {
           const fullPacket = this.reader.consume(length + 4);
           const parsed = this.protocol.parsePacket(fullPacket);

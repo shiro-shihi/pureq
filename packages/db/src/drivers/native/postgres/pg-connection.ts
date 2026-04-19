@@ -119,18 +119,20 @@ export class PgConnection {
 
   private handleParameterStatus(data: Uint8Array) {
     let offset = 0;
-    let nullIdx = data.indexOf(0, offset);
-    if (nullIdx === -1) return;
-    const name = new TextDecoder().decode(data.slice(offset, nullIdx));
-    offset = nullIdx + 1;
-    nullIdx = data.indexOf(0, offset);
-    if (nullIdx === -1) return;
-    const value = new TextDecoder().decode(data.slice(offset, nullIdx));
+    const nullIdx1 = data.indexOf(0, offset);
+    if (nullIdx1 === -1) return;
+    const name = new TextDecoder().decode(data.slice(offset, nullIdx1));
+    offset = nullIdx1 + 1;
+    
+    const nullIdx2 = data.indexOf(0, offset);
+    if (nullIdx2 === -1) return;
+    const value = new TextDecoder().decode(data.slice(offset, nullIdx2));
     this.parameters[name] = value;
   }
 
   private handleBackendKeyData(data: Uint8Array) {
-    const view = new DataView(data.buffer, data.byteOffset);
+    if (data.length < 8) return;
+    const view = new DataView(data.buffer, data.byteOffset, data.length);
     this.backendKeyData = {
       processId: view.getInt32(0),
       secretKey: view.getInt32(4)
@@ -138,18 +140,23 @@ export class PgConnection {
   }
 
   private handleNotification(data: Uint8Array) {
-    const notification = this.protocol.parseNotification(data);
-    for (const listener of this.notificationListeners) {
-      try {
-        listener(notification);
-      } catch (e) {
-        console.error("Error in PG notification listener:", e);
+    try {
+      const notification = this.protocol.parseNotification(data);
+      for (const listener of this.notificationListeners) {
+        try {
+          listener(notification);
+        } catch (e) {
+          console.error("Error in PG notification listener:", e);
+        }
       }
+    } catch (e) {
+      console.error("Failed to parse notification:", e);
     }
   }
 
   private preparedStatements = new Map<string, { name: string, fields: FieldDescription[] }>();
   private stmtCounter = 0;
+  private static readonly MAX_PREPARED_STATEMENTS = 1000;
 
   private async prepareAndDescribe(sql: string): Promise<{ name: string, fields: FieldDescription[] }> {
     const cached = this.preparedStatements.get(sql);
@@ -179,6 +186,15 @@ export class PgConnection {
     }
 
     const result = { name: stmtName, fields };
+    
+    // LRU-style eviction for simple Map: delete the first (oldest) entry
+    if (this.preparedStatements.size >= PgConnection.MAX_PREPARED_STATEMENTS) {
+        const oldestKey = this.preparedStatements.keys().next().value;
+        if (oldestKey !== undefined) {
+            this.preparedStatements.delete(oldestKey);
+        }
+    }
+    
     this.preparedStatements.set(sql, result);
     return result;
   }
@@ -212,37 +228,52 @@ export class PgConnection {
     let affectedRows = 0;
 
     while (true) {
-      const message = await this.readMessage();
-      
-      switch (message.type) {
-        case "D": {
-          if (fields.length <= 10) {
-            rows.push(this.protocol.parseDataRow(message.data, fields) as unknown as T);
-          } else {
-            rows.push(createLazyRowProxy<T>(message.data, fields, this.protocol));
+      // Microtask Batching: Process all available messages in the buffer before awaiting more data
+      while (this.reader.length >= 5) {
+        const header = this.reader.peek(5)!;
+        const type = String.fromCharCode(header[0]!);
+        const length = new DataView(header.buffer, header.byteOffset + 1).getInt32(0);
+        
+        if (this.reader.length < length + 1) break; // Incomplete message, wait for more data
+
+        const messageData = this.reader.consume(length + 1).subarray(5);
+        
+        switch (type) {
+          case "D": {
+            if (fields.length <= 10) {
+              rows.push(this.protocol.parseDataRow(messageData, fields) as unknown as T);
+            } else {
+              rows.push(createLazyRowProxy<T>(messageData, fields, this.protocol));
+            }
+            break;
           }
-          break;
-        }
-        case "C": {
-          const tag = new TextDecoder().decode(message.data).replace(/\0$/, "");
-          const parts = tag.split(" ");
-          if (parts.length > 1) {
-             const lastNum = parseInt(parts[parts.length - 1] ?? "0", 10);
-             if (!isNaN(lastNum)) affectedRows = lastNum;
+          case "C": {
+            const tag = new TextDecoder().decode(messageData).replace(/\0$/, "");
+            const parts = tag.split(" ");
+            if (parts.length > 1) {
+               const lastNum = parseInt(parts[parts.length - 1] ?? "0", 10);
+               if (!isNaN(lastNum)) affectedRows = lastNum;
+            }
+            break;
           }
-          break;
+          case "A":
+            this.handleNotification(messageData);
+            break;
+          case "E": {
+            const errDetails = this.protocol.parseErrorResponse(messageData);
+            await this.drainUntilReadyForQuery();
+            throw new DBError(this.mapSqlStateToCode(errDetails.code ?? ""), errDetails.message ?? "Database error", errDetails);
+          }
+          case "Z":
+            return { rows, affectedRows };
         }
-        case "A":
-          this.handleNotification(message.data);
-          break;
-        case "E": {
-          const errDetails = this.protocol.parseErrorResponse(message.data);
-          await this.drainUntilReadyForQuery();
-          throw new DBError(this.mapSqlStateToCode(errDetails.code ?? ""), errDetails.message ?? "Database error", errDetails);
-        }
-        case "Z":
-          return { rows, affectedRows };
       }
+
+      // Buffer empty or incomplete message: await next socket chunk
+      const iterator = this.socket.read();
+      const { value, done } = await iterator.next();
+      if (done || !value) throw new Error("Socket closed unexpectedly during query execution");
+      this.reader.append(value);
     }
   }
 
@@ -380,11 +411,18 @@ export class PgConnection {
     return this.reader.consume(length);
   }
 
+  private static readonly MAX_MESSAGE_SIZE = 16 * 1024 * 1024; // 16MB
+
   private async readMessage(): Promise<PgMessage> {
     const typeBuf = await this.readBytes(1);
     const type = String.fromCharCode(typeBuf[0]!);
     const lengthBuf = await this.readBytes(4);
     const length = new DataView(lengthBuf.buffer, lengthBuf.byteOffset).getInt32(0);
+    
+    if (length < 4 || length > PgConnection.MAX_MESSAGE_SIZE) {
+        throw new Error(`Invalid message length: ${length}. Range allowed: 4 to ${PgConnection.MAX_MESSAGE_SIZE}`);
+    }
+    
     const data = await this.readBytes(length - 4);
     return { type, data };
   }

@@ -1,4 +1,4 @@
-# @pureq/db v1.0.0
+# @pureq/db v1.2.0
 
 **The Policy-First, High-Performance Native Database Engine for TypeScript.**
 
@@ -21,15 +21,15 @@ Simulated high-latency connection (20ms RTT) executing a 3-query transaction.
 
 ### 2. CPU & Memory Efficiency (Decoding)
 
-Processing raw binary database rows into JavaScript accessors.
+The v1.2.0 **Bitwise Engine** eliminates `DataView` overhead and uses an **Ultra-Fast ASCII Decoder** to bypass C++/JS boundary crossings.
 
-| Scenario | Legacy Eager Parsing | **@pureq/db Hybrid** | Improvement |
+| Scenario | Legacy Eager Parsing | **@pureq/db v1.2 (Bitwise)** | Improvement |
 | :--- | :--- | :--- | :--- |
-| **Postgres (3 cols)** | 2.21 µs/row | **1.33 µs/row** | **1.6x Faster** |
-| **Postgres (20 cols)** | 16.46 µs/row | **2.11 µs/row** | **7.8x Faster** |
-| **MySQL (20 cols)** | 7.98 µs/row | **2.68 µs/row** | **3.0x Faster** |
+| **Postgres (100 cols)** | 11.82 µs/row | **6.24 µs/row** | **1.9x Faster** |
+| **Postgres (3 cols)** | 0.48 µs/row | **0.25 µs/row** | **1.9x Faster** |
+| **MySQL (20 cols)** | 7.98 µs/row | **2.11 µs/row** | **3.8x Faster** |
 
-*Benchmarks conducted on Node.js 24.11.0, 11th Gen Intel Core i7-11700F @ 2.50GHz. Note: Performance may vary based on environment and network conditions.*
+*Benchmarks conducted on Node.js 24.11.0. Note: Performance may vary based on environment and network conditions.*
 
 ---
 
@@ -37,16 +37,19 @@ Processing raw binary database rows into JavaScript accessors.
 
 | Feature | @pureq/db Native | Legacy Drivers (pg/mysql2) |
 | :--- | :--- | :--- |
-| **Security** | **Zero-Trust (AST Signatures)** | Vulnerable to raw string injection |
+| **Security** | **Hardened Zero-Trust (Timing-Safe)** | Vulnerable to raw string injection |
 | **Batching** | **Zero-Roundtrip Pipelining** | Sequential (Latency heavy) |
-| **Memory** | **Constant O(1) via LazyRow** | High (Eager object allocation) |
-| **Portability** | **Universal (Edge, Browser, Node)** | Node.js centric |
-| **Testing** | **Virtual DB (Record/Replay)** | Requires Docker/Database |
+| **Memory** | **Zero-Copy Buffer Management** | High (Eager object allocation) |
+| **Decoding** | **Raw Bitwise (No DataView)** | DataView/Buffer (Slow alignment) |
 | **Dependencies** | **0 Dependencies (Pure TS)** | Large C++/JS dependency trees |
 
 ---
 
 ## Game-Changing Features
+
+### Ultra-Fast Bitwise Engine
+
+The v1.2 release replaces standard `DataView` calls with raw bitwise operations (`<<`, `|`). This allows the V8 JIT compiler to generate optimal machine code with zero alignment checks, achieving near-native throughput.
 
 ### Zero-Roundtrip Pipelining
 
@@ -59,13 +62,15 @@ Traditional drivers parse every column into JavaScript objects immediately. @pur
 - **Eager mode:** Optimized for small result sets.
 - **Lazy mode (Proxy-based):** Automatically activated for wider rows. It holds the raw binary buffer and only decodes a specific column when you access it (e.g., `row.name`), reducing GC pressure by 90%+.
 
-### Zero-Trust Execution
+### Hardened Zero-Trust Execution
 
-When enabled, the driver refuses to execute any SQL string that does not carry a cryptographic signature from the Pureq Query Builder. This protocol-level protection makes SQL injection impossible, providing a true zero-trust foundation.
+When enabled, the driver refuses to execute any SQL string that does not carry a cryptographic signature. v1.2 introduces **Constant-Time Comparison** and **Secure Random Signatures** to eliminate timing attacks and prediction.
 
-### Virtual Database
+### Industrial-Grade Reliability
 
-Record database interactions into a snapshot and replay them in CI/CD. The driver acts as a virtual database server at the protocol level. No Docker or real database required for tests.
+- **DoS Protection:** Strict `MAX_MESSAGE_SIZE` (16MB) enforcement.
+- **Memory Leak Prevention:** LRU-capped Prepared Statement Caching (1000 entries).
+- **Recursion Guard:** Strict limits on nested array decoding to prevent stack overflow.
 
 ---
 

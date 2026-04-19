@@ -48,8 +48,40 @@ export class MysqlProtocol {
   private encoder = new TextEncoder();
   private decoder = new TextDecoder();
 
+  /**
+   * Ultra-fast ASCII decoder for small strings.
+   * Avoids the C++/JS boundary crossing overhead of TextDecoder.
+   */
+  decodeString(buf: Uint8Array, start: number, length: number): string {
+    if (length < 64) {
+      let isAscii = true;
+      let str = "";
+      for (let i = start; i < start + length; i++) {
+        const b = buf[i]!;
+        if (b > 127) { isAscii = false; break; }
+        str += String.fromCharCode(b);
+      }
+      if (isAscii) return str;
+    }
+    return this.decoder.decode(buf.subarray(start, start + length));
+  }
+
   // --- Packet Framing ---
   
+  private readInt16LE(buf: Uint8Array, offset: number): number {
+    return buf[offset]! | (buf[offset + 1]! << 8);
+  }
+
+  private readInt32LE(buf: Uint8Array, offset: number): number {
+    return (buf[offset]! | (buf[offset + 1]! << 8) | (buf[offset + 2]! << 16) | (buf[offset + 3]! << 24)) >>> 0;
+  }
+
+  private readInt64LE(buf: Uint8Array, offset: number): bigint {
+    const lo = this.readInt32LE(buf, offset);
+    const hi = this.readInt32LE(buf, offset + 4);
+    return (BigInt(hi) << 32n) | BigInt(lo);
+  }
+
   createPacket(payload: Uint8Array, sequenceId: number): Uint8Array {
     const buffer = new Uint8Array(payload.length + 4);
     buffer[0] = payload.length & 0xff;
@@ -82,28 +114,37 @@ export class MysqlProtocol {
     const serverVersion = this.decoder.decode(payload.slice(offset, nullIdx));
     offset = nullIdx + 1;
     
-    const view = new DataView(payload.buffer, payload.byteOffset);
+    if (offset + 4 > payload.length) throw new Error("Handshake truncated (connectionId)");
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.length);
     const connectionId = view.getUint32(offset, true);
     offset += 4;
     
+    if (offset + 8 > payload.length) throw new Error("Handshake truncated (authPluginData1)");
     const authPluginData1 = payload.slice(offset, offset + 8);
     offset += 8;
     offset += 1; // filter (0x00)
 
+    if (offset + 2 > payload.length) throw new Error("Handshake truncated (capabilityFlags1)");
     const capabilityFlags1 = (payload[offset] || 0) | ((payload[offset + 1] || 0) << 8);
     offset += 2;
+    if (offset >= payload.length) throw new Error("Handshake truncated (characterSet)");
     const characterSet = payload[offset++];
     if (characterSet === undefined) throw new Error("Invalid character set");
+    if (offset + 2 > payload.length) throw new Error("Handshake truncated (statusFlags)");
     const statusFlags = (payload[offset] || 0) | ((payload[offset + 1] || 0) << 8);
     offset += 2;
+    if (offset + 2 > payload.length) throw new Error("Handshake truncated (capabilityFlags2)");
     const capabilityFlags2 = (payload[offset] || 0) | ((payload[offset + 1] || 0) << 8);
     offset += 2;
     
+    if (offset >= payload.length) throw new Error("Handshake truncated (authPluginDataLen)");
     const authPluginDataLen = payload[offset++];
     if (authPluginDataLen === undefined) throw new Error("Invalid auth plugin data length");
     offset += 10; // reserved
     
-    const authPluginData2 = payload.slice(offset, offset + Math.max(13, authPluginDataLen - 8) - 1);
+    const secondPartLen = Math.max(13, authPluginDataLen - 8) - 1;
+    if (offset + secondPartLen > payload.length) throw new Error("Handshake truncated (authPluginData2)");
+    const authPluginData2 = payload.slice(offset, offset + secondPartLen);
     
     const salt = new Uint8Array(authPluginData1.length + authPluginData2.length);
     salt.set(authPluginData1);
@@ -257,11 +298,13 @@ export class MysqlProtocol {
   }
 
   parseError(payload: Uint8Array): MysqlError {
-    const view = new DataView(payload.buffer, payload.byteOffset);
+    if (payload.length < 3) throw new Error("Error packet too short");
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.length);
     const code = view.getUint16(1, true);
     let sqlState = "HY000";
     let message = "";
     if (payload[3] === '#'.charCodeAt(0)) {
+      if (payload.length < 9) throw new Error("Error packet too short for SQL state");
       sqlState = this.decoder.decode(payload.slice(4, 9));
       message = this.decoder.decode(payload.slice(9));
     } else {
@@ -275,9 +318,11 @@ export class MysqlProtocol {
     const readString = () => {
       const { value, length } = this.readLenEnc(payload, offset);
       offset += length;
-      const strBytes = payload.slice(offset, offset + Number(value));
-      offset += Number(value);
-      return this.decoder.decode(strBytes);
+      const len = Number(value);
+      if (offset + len > payload.length) throw new Error("Field packet truncated (string)");
+      const strBytes = payload.slice(offset, offset + len);
+      offset += len;
+      return this.decodeString(payload, offset, len);
     };
 
     const catalog = readString();
@@ -287,8 +332,10 @@ export class MysqlProtocol {
     const name = readString();
     const orgName = readString();
     
+    if (offset + 1 > payload.length) throw new Error("Field packet truncated (filler)");
     offset += 1;
-    const view = new DataView(payload.buffer, payload.byteOffset);
+    if (offset + 12 > payload.length) throw new Error("Field packet truncated (metadata)");
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.length);
     
     const characterSet = view.getUint16(offset, true); offset += 2;
     const columnLength = view.getUint32(offset, true); offset += 4;
@@ -305,10 +352,11 @@ export class MysqlProtocol {
     const row: any[] = [];
     let offset = 1;
     const nullBitmapLength = Math.floor((fields.length + 7 + 2) / 8);
+    if (offset + nullBitmapLength > payload.length) throw new Error("Binary row truncated (null bitmap)");
     const nullBitmap = payload.slice(offset, offset + nullBitmapLength);
     offset += nullBitmapLength;
 
-    const view = new DataView(payload.buffer, payload.byteOffset);
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.length);
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
@@ -326,18 +374,24 @@ export class MysqlProtocol {
       const type = field.type;
       switch (type) {
         case MYSQL_TYPES.TINY:
+          if (offset + 1 > payload.length) throw new Error("Binary row truncated (TINY)");
           row.push(view.getInt8(offset)); offset += 1; break;
         case MYSQL_TYPES.SHORT:
         case MYSQL_TYPES.YEAR:
+          if (offset + 2 > payload.length) throw new Error("Binary row truncated (SHORT/YEAR)");
           row.push(view.getInt16(offset, true)); offset += 2; break;
         case MYSQL_TYPES.INT24:
         case MYSQL_TYPES.LONG:
+          if (offset + 4 > payload.length) throw new Error("Binary row truncated (LONG)");
           row.push(view.getInt32(offset, true)); offset += 4; break;
         case MYSQL_TYPES.LONGLONG:
+          if (offset + 8 > payload.length) throw new Error("Binary row truncated (LONGLONG)");
           row.push(Number(view.getBigInt64(offset, true))); offset += 8; break;
         case MYSQL_TYPES.FLOAT:
+          if (offset + 4 > payload.length) throw new Error("Binary row truncated (FLOAT)");
           row.push(view.getFloat32(offset, true)); offset += 4; break;
         case MYSQL_TYPES.DOUBLE:
+          if (offset + 8 > payload.length) throw new Error("Binary row truncated (DOUBLE)");
           row.push(view.getFloat64(offset, true)); offset += 8; break;
         case MYSQL_TYPES.VARCHAR:
         case MYSQL_TYPES.VAR_STRING:
@@ -351,15 +405,19 @@ export class MysqlProtocol {
         case MYSQL_TYPES.NEWDECIMAL: {
           const { value: len, length: lenBytes } = this.readLenEnc(payload, offset);
           offset += lenBytes;
-          const str = this.decoder.decode(payload.slice(offset, offset + Number(len)));
+          const l = Number(len);
+          if (offset + l > payload.length) throw new Error("Binary row truncated (string/blob data)");
+          const str = this.decodeString(payload, offset, l);
           row.push(type === MYSQL_TYPES.JSON ? JSON.parse(str) : str);
-          offset += Number(len);
+          offset += l;
           break;
         }
         default:
           const { value: lenDate, length: lenBytesDate } = this.readLenEnc(payload, offset);
           offset += lenBytesDate;
-          offset += Number(lenDate);
+          const ld = Number(lenDate);
+          if (offset + ld > payload.length) throw new Error("Binary row truncated (date/time data)");
+          offset += ld;
           row.push("Unsupported_Date_Time_Binary_Format");
           break;
       }
