@@ -45,6 +45,27 @@ The v1.2.0 **Bitwise Engine** eliminates `DataView` overhead and uses an **Ultra
 
 ---
 
+## Comparison with Other Tools
+
+How does `@pureq/db` differ from industry standards like Prisma, Drizzle, or the classic `pg` driver?
+
+| Feature | **@pureq/db** | Prisma | Drizzle | pg (node-postgres) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Architecture** | **Pure TS (Native)** | Rust Engine binary | Library Wrapper | JS + Optional C++ |
+| **Security** | **Zero-Trust (Signed AST)** | Basic Validation | Type-safety only | None (Raw SQL) |
+| **Decoding** | **v1.2 Bitwise Engine** | Eager (JSON-RPC) | Driver-dependent | Eager (Slow) |
+| **Edge Ready** | **Yes (0 Deps)** | Heavy Cold Starts | Driver-dependent | No (Node.js only) |
+| **Latency** | **1 RTT (Pipelining)** | High (Rust Proxy) | Multi-RTT | Sequential |
+| **Bundle Size** | **Extremely Small** | Very Large | Small | Medium |
+
+### Why Pureq?
+
+1. **vs Prisma:** Prisma is powerful but heavy. Its Rust-based engine often struggles with cold starts on Edge functions (Cloudflare Workers). Pureq provides similar DX with **zero cold-start penalty** and a much smaller footprint.
+2. **vs Drizzle:** Drizzle is a great lightweight wrapper, but it still relies on external drivers like `pg` or `mysql2`. Pureq **is** the driver. We control the protocol layer, allowing for optimizations like **Bitwise Decoding** and **Signed Zero-Trust** that wrappers cannot provide.
+3. **vs pg / mysql2:** These are Node-specific and built for an era before Edge computing. They carry legacy baggage and lack modern security features. Pureq's **Zero-Trust mode** physically prevents SQL injection at the protocol level, which is a major leap over classic drivers.
+
+---
+
 ## Game-Changing Features
 
 ### Ultra-Fast Bitwise Engine
