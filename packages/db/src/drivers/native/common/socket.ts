@@ -32,11 +32,27 @@ export class BufferReader {
   }
 
   /**
-   * Consume and return bytes.
+   * Consume and return bytes. Returns a view (subarray) if possible to avoid copying.
    */
   consume(bytes: number): Uint8Array {
     if (this.length < bytes) throw new Error("Buffer underflow");
 
+    const firstChunk = this.chunks[0]!;
+    const availableInFirst = firstChunk.length - this.offset;
+
+    // Zero-copy optimization: if requested bytes are within the current chunk, return a view
+    if (availableInFirst >= bytes) {
+      const result = firstChunk.subarray(this.offset, this.offset + bytes);
+      this.offset += bytes;
+      if (this.offset >= firstChunk.length) {
+        this.chunks.shift();
+        this.offset = 0;
+      }
+      this.totalLength -= bytes;
+      return result;
+    }
+
+    // Fallback: merge necessary chunks (copying required)
     const result = new Uint8Array(bytes);
     let remaining = bytes;
     let resultOffset = 0;

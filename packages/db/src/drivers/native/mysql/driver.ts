@@ -1,4 +1,5 @@
 import { MysqlConnection, type MysqlConnectionConfig } from "./mysql-connection.js";
+import { PUREQ_AST_SIGNATURE } from "../../../builder/builder.js";
 import { NodeSocket } from "../common/node-socket.js";
 import { VirtualSocket } from "../common/virtual-socket.js";
 import type { Driver, QueryResult, QueryPayload } from "../../types.js";
@@ -62,8 +63,13 @@ export class MysqlNativeDriver implements Driver {
       }
       sql = query;
     } else {
-      if (this.config.zeroTrust && !query.__pureq_signature) {
-        throw new Error("Security Exception: Invalid or missing Query Builder signature.");
+      const sig = query.__pureq_signature || "";
+      let diff = sig.length ^ PUREQ_AST_SIGNATURE.length;
+      for (let i = 0; i < PUREQ_AST_SIGNATURE.length; i++) {
+        diff |= (sig.charCodeAt(i) || 0) ^ PUREQ_AST_SIGNATURE.charCodeAt(i);
+      }
+      if (this.config.zeroTrust && diff !== 0) {
+        throw new Error("Security Exception: Invalid or missing Query Builder signature. Zero-Trust validation failed.");
       }
       sql = query.sql;
     }
@@ -88,8 +94,8 @@ export class MysqlNativeDriver implements Driver {
   async executeBatch(queries: { query: QueryPayload; params: unknown[] }[]): Promise<QueryResult[]> {
     if (this.config.zeroTrust) {
       for (const q of queries) {
-        if (typeof q.query === "string" || !q.query.__pureq_signature) {
-          throw new Error("Security Exception: Zero-Trust mode is enabled. Batch queries must be signed by the Pureq Query Builder.");
+        if (typeof q.query === "string" || q.query.__pureq_signature !== PUREQ_AST_SIGNATURE) {
+          throw new Error("Security Exception: Zero-Trust mode is enabled. Batch queries must be signed with a valid Pureq signature.");
         }
       }
     }
@@ -119,8 +125,13 @@ export class MysqlNativeDriver implements Driver {
       }
       sql = query;
     } else {
-      if (this.config.zeroTrust && !query.__pureq_signature) {
-        throw new Error("Security Exception: Invalid or missing Query Builder signature.");
+      const sig = query.__pureq_signature || "";
+      let diff = sig.length ^ PUREQ_AST_SIGNATURE.length;
+      for (let i = 0; i < PUREQ_AST_SIGNATURE.length; i++) {
+        diff |= (sig.charCodeAt(i) || 0) ^ PUREQ_AST_SIGNATURE.charCodeAt(i);
+      }
+      if (this.config.zeroTrust && diff !== 0) {
+        throw new Error("Security Exception: Invalid or missing Query Builder signature. Zero-Trust validation failed.");
       }
       sql = query.sql;
     }

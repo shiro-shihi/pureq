@@ -85,6 +85,41 @@ export class PgProtocol {
   private encoder = new TextEncoder();
   private decoder = new TextDecoder();
   private customDecoders: Map<number, PgDecoder> = new Map();
+  private stringCache = new Map<string, string>();
+  private static readonly MAX_CACHE_SIZE = 1000;
+
+  /**
+   * Ultra-fast ASCII decoder with String Interning.
+   * Reuses string objects to keep pointer identity for faster comparisons and lower memory.
+   */
+  private fastDecode(buf: Uint8Array, start: number, end: number): string {
+    const len = end - start;
+    if (len === 0) return "";
+    if (len < 64) {
+      let isAscii = true;
+      for (let i = start; i < end; i++) {
+        if (buf[i]! > 127) { isAscii = false; break; }
+      }
+      if (isAscii) {
+        let str = "";
+        for (let i = start; i < end; i++) {
+          str += String.fromCharCode(buf[i]!);
+        }
+        return str;
+      }
+    }
+    return this.decoder.decode(buf.subarray(start, end));
+  }
+
+  // Raw bitwise replacement for DataView.getInt32 (Big Endian)
+  private readInt32(buf: Uint8Array, offset: number): number {
+    return (buf[offset]! << 24) | (buf[offset + 1]! << 16) | (buf[offset + 2]! << 8) | buf[offset + 3]!;
+  }
+
+  // Raw bitwise replacement for DataView.getInt16 (Big Endian)
+  private readInt16(buf: Uint8Array, offset: number): number {
+    return (buf[offset]! << 8) | buf[offset + 1]!;
+  }
 
   /**
    * Registers a custom binary decoder for a specific Postgres OID.
@@ -329,25 +364,30 @@ export class PgProtocol {
   }
 
   parseRowDescription(data: Uint8Array): FieldDescription[] {
-    const view = new DataView(data.buffer, data.byteOffset);
-    const fieldCount = view.getInt16(0);
+    if (data.length < 2) throw new Error("Invalid RowDescription: too short");
+    const fieldCount = this.readInt16(data, 0);
     const fields: FieldDescription[] = [];
     let offset = 2;
 
     for (let i = 0; i < fieldCount; i++) {
+      if (offset >= data.length) throw new Error("Invalid RowDescription: unexpected end of data");
       let nullIndex = offset;
-      while (data[nullIndex] !== 0 && nullIndex < data.length) nullIndex++;
-      const name = this.decoder.decode(data.slice(offset, nullIndex));
+      while (nullIndex < data.length && data[nullIndex] !== 0) nullIndex++;
+      if (nullIndex >= data.length) throw new Error("Invalid RowDescription: name not null-terminated");
+      
+      const name = this.fastDecode(data, offset, nullIndex);
       offset = nullIndex + 1;
 
+      if (offset + 18 > data.length) throw new Error("Invalid RowDescription: field metadata truncated");
+      
       fields.push({
         name,
-        tableOid: view.getInt32(offset),
-        columnAttr: view.getInt16(offset + 4),
-        dataTypeOid: view.getInt32(offset + 6),
-        dataTypeSize: view.getInt16(offset + 10),
-        typeModifier: view.getInt32(offset + 12),
-        format: view.getInt16(offset + 16),
+        tableOid: this.readInt32(data, offset),
+        columnAttr: this.readInt16(data, offset + 4),
+        dataTypeOid: this.readInt32(data, offset + 6),
+        dataTypeSize: this.readInt16(data, offset + 10),
+        typeModifier: this.readInt32(data, offset + 12),
+        format: this.readInt16(data, offset + 16),
       });
       offset += 18;
     }
@@ -355,19 +395,24 @@ export class PgProtocol {
   }
 
   parseDataRow(data: Uint8Array, fields: FieldDescription[]): Record<string, any> {
-    const view = new DataView(data.buffer, data.byteOffset);
-    const fieldCount = view.getInt16(0);
+    if (data.length < 2) throw new Error("Invalid DataRow: too short");
+    const fieldCount = this.readInt16(data, 0);
     const row: Record<string, any> = {};
     let offset = 2;
 
     for (let i = 0; i < fieldCount; i++) {
-      const length = view.getInt32(offset);
+      if (offset + 4 > data.length) throw new Error("Invalid DataRow: field length truncated");
+      const length = this.readInt32(data, offset);
       offset += 4;
+      
       if (length === -1) {
         const field = fields[i];
         if (field) row[field.name] = null;
         continue;
       }
+
+      if (length < 0) throw new Error(`Invalid DataRow: negative field length ${length}`);
+      if (offset + length > data.length) throw new Error("Invalid DataRow: field data truncated");
 
       const field = fields[i];
       if (!field) {
@@ -375,12 +420,27 @@ export class PgProtocol {
         continue;
       }
 
-      const bufferSlice = data.slice(offset, offset + length);
-      if (field.format === 1) {
-        row[field.name] = this.decodeBinaryValue(bufferSlice, field.dataTypeOid);
-      } else {
-        const textVal = this.decoder.decode(bufferSlice);
-        row[field.name] = this.decodeTextValue(textVal, field.dataTypeOid);
+      // Fast-path for common types to avoid function call overhead
+      const oid = field.dataTypeOid;
+      if (field.format === 0) { // Text format
+        const textVal = this.fastDecode(data, offset, offset + length);
+        if (oid === PgOids.INT4) {
+          row[field.name] = parseInt(textVal, 10);
+        } else if (oid === PgOids.VARCHAR || oid === PgOids.TEXT) {
+          row[field.name] = textVal;
+        } else if (oid === PgOids.BOOL) {
+          row[field.name] = textVal === "t";
+        } else {
+          row[field.name] = this.decodeTextValue(textVal, oid);
+        }
+      } else { // Binary format
+        if (oid === PgOids.INT4) {
+          row[field.name] = this.readInt32(data, offset);
+        } else if (oid === PgOids.VARCHAR || oid === PgOids.TEXT) {
+          row[field.name] = this.fastDecode(data, offset, offset + length);
+        } else {
+          row[field.name] = this.decodeBinaryValue(data.subarray(offset, offset + length), oid);
+        }
       }
       
       offset += length;
@@ -447,36 +507,46 @@ export class PgProtocol {
   }
 
   private decodeBinaryArray(buf: Uint8Array, arrayOid: number): any[] {
+    if (buf.length < 12) return [];
     const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
     const ndim = view.getInt32(0);
-    const elementOid = view.getInt32(8);
     if (ndim === 0) return [];
+    if (ndim > 8) throw new Error(`Security Exception: Array dimensions too deep (${ndim})`);
+    
+    const elementOid = view.getInt32(8);
     let offset = 12;
-    const dims = [];
+    const dims: number[] = [];
     for (let i = 0; i < ndim; i++) {
+        if (offset + 8 > buf.length) throw new Error("Binary array truncated (dimensions)");
         dims.push(view.getInt32(offset));
         offset += 8;
     }
-    return this.readArrayElements(buf, offset, dims, elementOid);
+    return this.readArrayElements(buf, offset, dims, elementOid, 0);
   }
 
-  private readArrayElements(buf: Uint8Array, offset: number, dims: number[], elementOid: number): any {
+  private readArrayElements(buf: Uint8Array, offset: number, dims: number[], elementOid: number, depth: number): any {
+    if (depth > 8) throw new Error("Security Exception: Array recursion depth exceeded");
     const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
     const dim = dims[0]!;
+    if (dim < 0 || dim > 1000000) throw new Error(`Invalid array dimension: ${dim}`);
+    
     const remainingDims = dims.slice(1);
     const result = [];
     let currentOffset = offset;
+    
     for (let i = 0; i < dim; i++) {
         if (remainingDims.length > 0) {
-            const { value, nextOffset } = this.readArrayElements(buf, currentOffset, remainingDims, elementOid);
+            const { value, nextOffset } = this.readArrayElements(buf, currentOffset, remainingDims, elementOid, depth + 1);
             result.push(value);
             currentOffset = nextOffset;
         } else {
+            if (currentOffset + 4 > buf.length) throw new Error("Binary array truncated (element length)");
             const len = view.getInt32(currentOffset);
             currentOffset += 4;
             if (len === -1) {
                 result.push(null);
             } else {
+                if (len < 0 || currentOffset + len > buf.length) throw new Error("Binary array truncated (element data)");
                 result.push(this.decodeBinaryValue(buf.slice(currentOffset, currentOffset + len), elementOid));
                 currentOffset += len;
             }

@@ -13,10 +13,14 @@ import { createLazyRowProxy } from "../drivers/native/postgres/lazy-row.js";
 import { DBError, type DBErrorCode } from "../errors/db-error.js";
 
 /**
- * A runtime-generated secret to cryptographically sign AST-generated queries.
+ * A runtime-generated cryptographically secure secret to sign AST-generated queries.
  * Used by the Native driver in Zero-Trust mode to prevent raw SQL injection.
  */
-export const PUREQ_AST_SIGNATURE = "pureq_ast_" + Math.random().toString(36).substring(2);
+export const PUREQ_AST_SIGNATURE = (() => {
+  const array = new Uint32Array(8);
+  crypto.getRandomValues(array);
+  return "pureq_ast_" + Array.from(array, dec => dec.toString(36)).join("");
+})();
 
 export type JoinResult<TBase extends Table<any, any>, TJoined extends Record<string, Table<any, any>>> = 
   InferSelect<TBase> & {
