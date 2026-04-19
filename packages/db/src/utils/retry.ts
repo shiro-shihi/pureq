@@ -1,4 +1,4 @@
-import type { Driver, QueryResult } from "../drivers/types.js";
+import type { Driver, QueryResult, QueryPayload } from "../drivers/types.js";
 
 export interface RetryOptions {
   maxRetries?: number;
@@ -30,12 +30,12 @@ export function withRetry(driver: Driver, options: RetryOptions = {}): Driver {
   const opts = { ...DEFAULT_RETRY_OPTIONS, ...options };
 
   const executeWithRetry = async <T>(
-    sql: string,
+    query: QueryPayload,
     params?: unknown[],
     attempt = 0
   ): Promise<QueryResult<T>> => {
     try {
-      return await driver.execute<T>(sql, params);
+      return await driver.execute<T>(query, params);
     } catch (error) {
       if (attempt < opts.maxRetries && opts.shouldRetry(error)) {
         const delay = Math.min(
@@ -43,14 +43,14 @@ export function withRetry(driver: Driver, options: RetryOptions = {}): Driver {
           opts.maxDelay
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
-        return executeWithRetry(sql, params, attempt + 1);
+        return executeWithRetry(query, params, attempt + 1);
       }
       throw error;
     }
   };
 
   return {
-    execute: (sql, params) => executeWithRetry(sql, params),
+    execute: (query, params) => executeWithRetry(query, params),
     transaction: (fn) => driver.transaction(fn),
   };
 }

@@ -1,7 +1,7 @@
 /**
  * Pure TypeScript Postgres Wire Protocol implementation.
  * Zero dependencies on Node.js. Uses Uint8Array and DataView.
- * Supports Binary Data Transfer and detailed Error parsing.
+ * Supports Binary Data Transfer, detailed Error parsing, and Custom Type Decoders.
  */
 
 export type PgMessageType = string;
@@ -44,25 +44,64 @@ export interface PgErrorDetails {
 export const PgOids = {
   BOOL: 16,
   BYTEA: 17,
+  CHAR: 18,
+  NAME: 19,
   INT8: 20,
   INT2: 21,
   INT4: 23,
   TEXT: 25,
+  OID: 26,
   JSON: 114,
   FLOAT4: 700,
   FLOAT8: 701,
+  INET: 869,
   VARCHAR: 1043,
   DATE: 1082,
+  TIME: 1083,
   TIMESTAMP: 1114,
   TIMESTAMPTZ: 1184,
   NUMERIC: 1700,
-  JSONB: 3802,
   UUID: 2950,
+  JSONB: 3802,
+  BOOL_ARRAY: 1000,
+  INT2_ARRAY: 1005,
+  INT4_ARRAY: 1007,
+  INT8_ARRAY: 1016,
+  TEXT_ARRAY: 1009,
+  VARCHAR_ARRAY: 1015,
+  FLOAT4_ARRAY: 1021,
+  FLOAT8_ARRAY: 1022,
 } as const;
+
+export interface PgNotification {
+  processId: number;
+  channel: string;
+  payload: string;
+}
+
+export type PgDecoder = (buf: Uint8Array) => any;
 
 export class PgProtocol {
   private encoder = new TextEncoder();
   private decoder = new TextDecoder();
+  private customDecoders: Map<number, PgDecoder> = new Map();
+
+  /**
+   * Registers a custom binary decoder for a specific Postgres OID.
+   */
+  registerDecoder(oid: number, decoder: PgDecoder): void {
+    this.customDecoders.set(oid, decoder);
+  }
+
+  encodeCancelRequest(processId: number, secretKey: number): Uint8Array {
+    const buffer = new Uint8Array(16);
+    const view = new DataView(buffer.buffer);
+    view.setInt32(0, 16);
+    view.setInt32(4, 80877102);
+    view.setInt32(8, processId);
+    view.setInt32(12, secretKey);
+    return buffer;
+  }
 
   encodePassword(password: string): Uint8Array {
     const passBytes = this.encoder.encode(password);
@@ -71,6 +110,39 @@ export class PgProtocol {
     buffer[0] = "p".charCodeAt(0);
     new DataView(buffer.buffer).setInt32(1, size);
     buffer.set(passBytes, 5);
+    return buffer;
+  }
+
+  encodeSASLInitialResponse(mechanism: string, clientFirstMessage: string): Uint8Array {
+    const mechBytes = this.encoder.encode(mechanism);
+    const msgBytes = this.encoder.encode(clientFirstMessage);
+    const size = 4 + mechBytes.length + 1 + 4 + msgBytes.length;
+    const buffer = new Uint8Array(size + 1);
+    buffer[0] = "p".charCodeAt(0);
+    const view = new DataView(buffer.buffer);
+    view.setInt32(1, size);
+    let offset = 5;
+    buffer.set(mechBytes, offset); offset += mechBytes.length + 1;
+    view.setInt32(offset, msgBytes.length); offset += 4;
+    buffer.set(msgBytes, offset);
+    return buffer;
+  }
+
+  encodeSASLResponse(clientFinalMessage: string): Uint8Array {
+    const msgBytes = this.encoder.encode(clientFinalMessage);
+    const size = 4 + msgBytes.length;
+    const buffer = new Uint8Array(size + 1);
+    buffer[0] = "p".charCodeAt(0);
+    new DataView(buffer.buffer).setInt32(1, size);
+    buffer.set(msgBytes, 5);
+    return buffer;
+  }
+
+  encodeSSLRequest(): Uint8Array {
+    const buffer = new Uint8Array(8);
+    const view = new DataView(buffer.buffer);
+    view.setInt32(0, 8);
+    view.setInt32(4, 80877103);
     return buffer;
   }
 
@@ -83,7 +155,7 @@ export class PgProtocol {
     const buffer = new Uint8Array(size);
     const view = new DataView(buffer.buffer);
     view.setInt32(0, size);
-    view.setInt32(4, 196608); // Protocol 3.0
+    view.setInt32(4, 196608);
 
     let offset = 8;
     for (const [k, v] of Object.entries(params)) {
@@ -127,6 +199,7 @@ export class PgProtocol {
     
     const encodedParams = params.map(p => {
       if (p === null || p === undefined) return null;
+      if (p instanceof Uint8Array) return p;
       return typeof p === 'string' ? this.encoder.encode(p) : this.encoder.encode(JSON.stringify(p));
     });
 
@@ -137,9 +210,9 @@ export class PgProtocol {
 
     const rfCount = resultFormats.length === 0 ? 1 : resultFormats.length;
     const size = 4 + pNameBytes.length + 1 + sNameBytes.length + 1 + 
-                 2 + 2 + // param format codes
-                 2 + paramsSize + // params
-                 2 + (rfCount * 2); // result format codes
+                 2 + 2 + 
+                 2 + paramsSize + 
+                 2 + (rfCount * 2);
 
     const buffer = new Uint8Array(size + 1);
     buffer[0] = "B".charCodeAt(0);
@@ -281,33 +354,33 @@ export class PgProtocol {
     return fields;
   }
 
-  parseDataRow(data: Uint8Array, fields: FieldDescription[]): any[] {
+  parseDataRow(data: Uint8Array, fields: FieldDescription[]): Record<string, any> {
     const view = new DataView(data.buffer, data.byteOffset);
     const fieldCount = view.getInt16(0);
-    const row: any[] = [];
+    const row: Record<string, any> = {};
     let offset = 2;
 
     for (let i = 0; i < fieldCount; i++) {
       const length = view.getInt32(offset);
       offset += 4;
       if (length === -1) {
-        row.push(null);
+        const field = fields[i];
+        if (field) row[field.name] = null;
         continue;
       }
 
       const field = fields[i];
       if (!field) {
         offset += length;
-        row.push(null);
         continue;
       }
 
       const bufferSlice = data.slice(offset, offset + length);
       if (field.format === 1) {
-        row.push(this.decodeBinaryValue(bufferSlice, field.dataTypeOid));
+        row[field.name] = this.decodeBinaryValue(bufferSlice, field.dataTypeOid);
       } else {
         const textVal = this.decoder.decode(bufferSlice);
-        row.push(this.decodeTextValue(textVal, field.dataTypeOid));
+        row[field.name] = this.decodeTextValue(textVal, field.dataTypeOid);
       }
       
       offset += length;
@@ -315,7 +388,25 @@ export class PgProtocol {
     return row;
   }
 
+  parseNotification(data: Uint8Array): PgNotification {
+    const view = new DataView(data.buffer, data.byteOffset);
+    const processId = view.getInt32(0);
+    let offset = 4;
+    
+    let nullIdx = data.indexOf(0, offset);
+    const channel = this.decoder.decode(data.slice(offset, nullIdx));
+    offset = nullIdx + 1;
+    
+    nullIdx = data.indexOf(0, offset);
+    const payload = this.decoder.decode(data.slice(offset, nullIdx));
+    
+    return { processId, channel, payload };
+  }
+
   private decodeBinaryValue(buf: Uint8Array, oid: number): any {
+    const custom = this.customDecoders.get(oid);
+    if (custom) return custom(buf);
+
     const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
     switch (oid) {
       case PgOids.BOOL: return buf[0] !== 0;
@@ -335,9 +426,63 @@ export class PgProtocol {
         return JSON.parse(str);
       }
       case PgOids.BYTEA: return buf;
+      case PgOids.UUID: {
+        const hex = Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+      }
+      case PgOids.INET: return this.decoder.decode(buf);
+      case PgOids.BOOL_ARRAY:
+      case PgOids.INT2_ARRAY:
+      case PgOids.INT4_ARRAY:
+      case PgOids.INT8_ARRAY:
+      case PgOids.TEXT_ARRAY:
+      case PgOids.VARCHAR_ARRAY:
+      case PgOids.FLOAT4_ARRAY:
+      case PgOids.FLOAT8_ARRAY:
+        return this.decodeBinaryArray(buf, oid);
       default:
+        // Try simple EWKB detection if OID looks like PostGIS (often starts with 3000+ or custom)
         return this.decoder.decode(buf);
     }
+  }
+
+  private decodeBinaryArray(buf: Uint8Array, arrayOid: number): any[] {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
+    const ndim = view.getInt32(0);
+    const elementOid = view.getInt32(8);
+    if (ndim === 0) return [];
+    let offset = 12;
+    const dims = [];
+    for (let i = 0; i < ndim; i++) {
+        dims.push(view.getInt32(offset));
+        offset += 8;
+    }
+    return this.readArrayElements(buf, offset, dims, elementOid);
+  }
+
+  private readArrayElements(buf: Uint8Array, offset: number, dims: number[], elementOid: number): any {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
+    const dim = dims[0]!;
+    const remainingDims = dims.slice(1);
+    const result = [];
+    let currentOffset = offset;
+    for (let i = 0; i < dim; i++) {
+        if (remainingDims.length > 0) {
+            const { value, nextOffset } = this.readArrayElements(buf, currentOffset, remainingDims, elementOid);
+            result.push(value);
+            currentOffset = nextOffset;
+        } else {
+            const len = view.getInt32(currentOffset);
+            currentOffset += 4;
+            if (len === -1) {
+                result.push(null);
+            } else {
+                result.push(this.decodeBinaryValue(buf.slice(currentOffset, currentOffset + len), elementOid));
+                currentOffset += len;
+            }
+        }
+    }
+    return remainingDims.length > 0 ? { value: result, nextOffset: currentOffset } : result;
   }
 
   private decodeTextValue(val: string, oid: number): any {

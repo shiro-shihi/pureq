@@ -10,7 +10,8 @@ describe("MigrationManager", () => {
 
   beforeEach(() => {
     mockDriver = {
-      execute: vi.fn().mockImplementation(async (sql) => {
+      execute: vi.fn().mockImplementation(async (query) => {
+        const sql = typeof query === "string" ? query : query.sql;
         if (sql.includes("SELECT id FROM _pureq_migrations")) {
           return { rows: [] } as QueryResult;
         }
@@ -24,7 +25,9 @@ describe("MigrationManager", () => {
 
   it("should setup migrations table", async () => {
     await manager.setup();
-    expect(mockDriver.execute).toHaveBeenCalledWith(expect.stringContaining("CREATE TABLE IF NOT EXISTS _pureq_migrations"));
+    expect(mockDriver.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ sql: expect.stringContaining("CREATE TABLE IF NOT EXISTS _pureq_migrations") })
+    );
   });
 
   it("should apply pending migrations", async () => {
@@ -46,17 +49,18 @@ describe("MigrationManager", () => {
     expect(migrations[0].up).toHaveBeenCalled();
     expect(migrations[1].up).toHaveBeenCalled();
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)",
+      expect.objectContaining({ sql: "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)" }),
       ["20240101_init", 1]
     );
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)",
+      expect.objectContaining({ sql: "INSERT INTO _pureq_migrations (id, timestamp) VALUES (?, ?)" }),
       ["20240102_add_profile", 2]
     );
   });
 
   it("should skip already applied migrations", async () => {
-    (mockDriver.execute as any).mockImplementation(async (sql: string) => {
+    (mockDriver.execute as any).mockImplementation(async (query: any) => {
+      const sql = typeof query === "string" ? query : query.sql;
       if (sql.includes("SELECT id FROM _pureq_migrations")) {
         return { rows: [{ id: "20240101_init" }] };
       }

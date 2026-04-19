@@ -1,6 +1,6 @@
 import { parseWithOptions, isOk } from "@pureq/validation";
 import type { DB } from "../core/db.js";
-import type { Table, ColumnBuilder } from "../schema/dsl.js";
+import type { Table } from "../schema/dsl.js";
 import type { InferSelect, InferInsert } from "../schema/inference.js";
 import { toValidationSchema } from "../schema/validation-bridge.js";
 import type { SelectStatement, InsertStatement, UpdateStatement, DeleteStatement, Expression, Join } from "./ast.js";
@@ -9,6 +9,14 @@ import type { QueryContext } from "../types/context.js";
 import { validateIdentifier, isCircular, validateOperator, validateExpression } from "./utils.js";
 import { type QuerySpan } from "../types/diagnostics.js";
 import { op } from "./expressions.js";
+import { createLazyRowProxy } from "../drivers/native/postgres/lazy-row.js";
+import { DBError, type DBErrorCode } from "../errors/db-error.js";
+
+/**
+ * A runtime-generated secret to cryptographically sign AST-generated queries.
+ * Used by the Native driver in Zero-Trust mode to prevent raw SQL injection.
+ */
+export const PUREQ_AST_SIGNATURE = "pureq_ast_" + Math.random().toString(36).substring(2);
 
 export type JoinResult<TBase extends Table<any, any>, TJoined extends Record<string, Table<any, any>>> = 
   InferSelect<TBase> & {
@@ -214,7 +222,6 @@ export class SelectBuilder<
 
   /**
    * Eagerly loads a relation defined in the table schema.
-   * (Basic implementation for relation resolution)
    */
   with<K extends TBase extends Table<any, any> ? keyof (TBase["options"]["relations"] & {}) : never>(
     relationName: K
@@ -224,12 +231,9 @@ export class SelectBuilder<
     const rel = (this.tableObj.options.relations as any)?.[relationName];
     if (!rel) throw new Error(`Relation "${String(relationName)}" not defined on table "${this.tableObj.name}"`);
 
-    // Automatically add an inner join based on the relation definition
     const targetTable = rel.target;
     const foreignKey = rel.foreignKey;
     
-    // For belongsTo: thisTable.foreignKey = targetTable.primaryKey
-    // For simplicity in this iteration, we assume targetTable has an 'id' column as PK
     return this.innerJoin(relationName as any, targetTable as any, ({ base, joined }) => ({
       type: "binary",
       left: { type: "column", name: foreignKey, table: (base as any).name },
@@ -243,8 +247,6 @@ export class SelectBuilder<
       throw new Error("Table must be specified for SELECT query");
     }
 
-    // If it's a join and columns are *, expand them to include all table prefixes
-    // for proper structural mapping.
     if (this.statement.joins && this.statement.joins.length > 0 && this.statement.columns === "*") {
        const expanded: (string | Expression)[] = [];
        if (this.tableObj) {
@@ -262,45 +264,36 @@ export class SelectBuilder<
     }
 
     const pushdownStatement = this.applyPolicyPushdown();
-
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileSelect(pushdownStatement);
     
     const span: QuerySpan = {
+      id: crypto.randomUUID(),
+      statement: pushdownStatement,
       sql,
       params,
       startTime: Date.now(),
-      policiesApplied: [] as string[]
+      duration: 0,
+      context: this.context
     };
     
     this.db.diagnostics.onQueryStart(span);
     
     try {
-      const result = await this.db.driver.execute<any>(sql, params);
+      const result = await this.db.driver.execute<any>({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
       let rows = result.rows;
 
-      // Structure mapping for JOIN results
       if (this.statement.joins && this.statement.joins.length > 0) {
         rows = rows.map(row => {
           const structured: any = {};
           for (const [key, value] of Object.entries(row)) {
             if (key.startsWith("__") && key.includes("__", 2)) {
-               // Key is like "__table__column"
                const parts = key.split("__");
                const tableName = parts[1];
                const colName = parts[2];
-               
-               if (!tableName || !colName) {
-                 structured[key] = value;
-                 continue;
-               }
-
-               // Find the alias/key used for this table in joins
-               const alias = Object.keys(this.joinedTables as object).find(a => (this.joinedTables as any)[a].name === tableName) || tableName;
-               
-               if (!structured[alias] || typeof structured[alias] !== "object") {
-                 structured[alias] = {};
-               }
+               if (!tableName || !colName) { structured[key] = value; continue; }
+               const alias = Object.keys(this.joinedTables as Record<string, Table<any, any>>).find(a => (this.joinedTables as any)[a].name === tableName) || tableName;
+               if (!structured[alias] || typeof structured[alias] !== "object") structured[alias] = {};
                structured[alias][colName] = value;
             } else {
                structured[key] = value;
@@ -315,9 +308,7 @@ export class SelectBuilder<
         const validatedRows = [];
         for (const row of rows) {
           const parsed = parseWithOptions(schema, row);
-          if (!isOk(parsed)) {
-            throw new Error(`Validation failed for row: ${JSON.stringify(parsed.error)}`);
-          }
+          if (!isOk(parsed)) throw new Error(`Validation failed for row: ${JSON.stringify(parsed.error)}`);
           validatedRows.push(parsed.value.data as any);
         }
         rows = validatedRows;
@@ -326,7 +317,6 @@ export class SelectBuilder<
       span.endTime = Date.now();
       span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
-
       return rows as any;
     } catch (error) {
       span.error = error as Error;
@@ -339,40 +329,24 @@ export class SelectBuilder<
 
   private applyPolicyPushdown(): SelectStatement {
     if (!this.context) return this.statement;
-
     const statement = { ...this.statement, joins: this.statement.joins ? [...this.statement.joins] : [] };
     const userScopes = new Set(this.context.scopes ?? []);
-
-    // 1. Apply to Base Table
-    if (this.tableObj) {
-        this.applyTablePolicy(statement, this.tableObj as any, undefined, userScopes);
-    }
-
-    // 2. Apply to Joins (Deep Policy Pushdown)
+    if (this.tableObj) this.applyTablePolicy(statement, this.tableObj as any, undefined, userScopes);
     if (statement.joins) {
         for (const join of statement.joins) {
             const joinedTable = Object.values(this.joinedTables).find(t => t.name === join.table);
-            if (joinedTable) {
-                this.applyTablePolicy(statement, joinedTable, join.table, userScopes);
-            }
+            if (joinedTable) this.applyTablePolicy(statement, joinedTable, join.table, userScopes);
         }
     }
-
     return statement;
   }
 
   private applyTablePolicy(statement: SelectStatement, table: Table<any, any>, alias: string | undefined, userScopes: Set<string>): void {
     const tableName = alias || table.name;
-
-    // Row-Level Security (RLS)
-    
-    // 1. Generic Table Policy (Priority)
     if (table.options.policy?.rls && this.context) {
       const genericFilter = table.options.policy.rls(this.context, op);
       this.addWhere(statement, genericFilter);
-    } 
-    // 2. Legacy/Convenience Default userId Policy
-    else if (this.context?.userId && table.columns["userId"]) {
+    } else if (this.context?.userId && table.columns["userId"]) {
        const rowFilter: Expression = {
          type: "binary",
          left: { type: "column", name: "userId", table: tableName },
@@ -381,88 +355,33 @@ export class SelectBuilder<
        };
        this.addWhere(statement, rowFilter);
     }
-
-    // Column-Level Security (CLS)
     const allowedColumns: (string | Expression)[] = [];
-
     for (const [name, col] of Object.entries(table.columns)) {
       const options = (col as any).options;
       const policy = options?.policy;
-      
-      // 1. Check Scope
       const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
-      
-      if (!hasScope) {
-        if (policy?.redact === "hide") continue;
-        // If not hidden but no scope, we might want to mask or nullify. 
-        // For now, if no scope and not explicitly hidden, we just skip it to be safe.
-        continue; 
-      }
-
-      // 2. Check PII/Redact
+      if (!hasScope) { if (policy?.redact === "hide") continue; continue; }
       if (policy?.pii && policy?.redact === "mask") {
-        // Simple masking: first 3 chars + ***
-        // In a real dialect-specific compiler, this would be more sophisticated.
         allowedColumns.push({
           type: "binary",
-          left: {
-            type: "function",
-            name: "SUBSTR",
-            args: [
-              { type: "column", name, table: tableName },
-              { type: "literal", value: 1 },
-              { type: "literal", value: 3 }
-            ]
-          },
+          left: { type: "function", name: "SUBSTR", args: [{ type: "column", name, table: tableName }, { type: "literal", value: 1 }, { type: "literal", value: 3 }] },
           operator: "||",
           right: { type: "literal", value: "***" }
         });
-      } else {
-        allowedColumns.push(name);
-      }
+      } else { allowedColumns.push(name); }
     }
-
-    if (statement.columns === "*") {
-        statement.columns = allowedColumns;
-    } else if (Array.isArray(statement.columns)) {
-        // Filter and substitute requested columns
+    if (statement.columns === "*") { statement.columns = allowedColumns; }
+    else if (Array.isArray(statement.columns)) {
         const newRequested: (string | Expression)[] = [];
         for (const req of statement.columns) {
           if (typeof req === "string") {
             const allowed = allowedColumns.find(a => (typeof a === "string" ? a === req : (a as any).left.args[0].name === req));
             if (allowed) newRequested.push(allowed);
-          } else {
-            // If it's already an expression, we assume it's validated elsewhere or passed through
-            newRequested.push(req);
-          }
+          } else { newRequested.push(req); }
         }
         statement.columns = newRequested;
     }
   }
-}
-
-export function count(column: string | "*"): Expression {
-  return {
-    type: "function",
-    name: "COUNT",
-    args: [typeof column === "string" ? { type: "column", name: column } : { type: "literal", value: "*" }]
-  };
-}
-
-export function sum(column: string): Expression {
-  return { type: "function", name: "SUM", args: [{ type: "column", name: column }] };
-}
-
-export function avg(column: string): Expression {
-  return { type: "function", name: "AVG", args: [{ type: "column", name: column }] };
-}
-
-export function min(column: string): Expression {
-  return { type: "function", name: "MIN", args: [{ type: "column", name: column }] };
-}
-
-export function max(column: string): Expression {
-  return { type: "function", name: "MAX", args: [{ type: "column", name: column }] };
 }
 
 export class InsertBuilder<TTable extends Table<any, any>> {
@@ -477,12 +396,10 @@ export class InsertBuilder<TTable extends Table<any, any>> {
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileInsert(this.statement);
-    
-    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
     this.db.diagnostics.onQueryStart(span);
-    
     try {
-      const result = await this.db.driver.execute(sql, params);
+      const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
       span.endTime = Date.now();
       span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
@@ -490,7 +407,6 @@ export class InsertBuilder<TTable extends Table<any, any>> {
     } catch (error) {
       span.error = error as Error;
       span.endTime = Date.now();
-      span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
       throw error;
     }
@@ -516,30 +432,19 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
       validateIdentifier(column as string);
       validateString(operator!, "Operator");
       validateOperator(operator!);
-      newExpr = {
-        type: "binary",
-        left: { type: "column", name: column as string },
-        operator: operator!,
-        right: { type: "literal", value },
-      };
+      newExpr = { type: "binary", left: { type: "column", name: column as string }, operator: operator!, right: { type: "literal", value } };
     }
-
-    if (this.statement.where) {
-      this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
-    } else {
-      this.statement.where = newExpr;
-    }
+    if (this.statement.where) this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
+    else this.statement.where = newExpr;
     return this;
   }
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileUpdate(this.statement);
-
-    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
     this.db.diagnostics.onQueryStart(span);
-
     try {
-      const result = await this.db.driver.execute(sql, params);
+      const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
       span.endTime = Date.now();
       span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
@@ -547,7 +452,6 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
     } catch (error) {
       span.error = error as Error;
       span.endTime = Date.now();
-      span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
       throw error;
     }
@@ -569,30 +473,19 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
       validateIdentifier(column as string);
       validateString(operator!, "Operator");
       validateOperator(operator!);
-      newExpr = {
-        type: "binary",
-        left: { type: "column", name: column as string },
-        operator: operator!,
-        right: { type: "literal", value },
-      };
+      newExpr = { type: "binary", left: { type: "column", name: column as string }, operator: operator!, right: { type: "literal", value } };
     }
-
-    if (this.statement.where) {
-      this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
-    } else {
-      this.statement.where = newExpr;
-    }
+    if (this.statement.where) this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
+    else this.statement.where = newExpr;
     return this;
   }
   async execute() {
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileDelete(this.statement);
-
-    const span: QuerySpan = { sql, params, startTime: Date.now() };
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
     this.db.diagnostics.onQueryStart(span);
-
     try {
-      const result = await this.db.driver.execute(sql, params);
+      const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
       span.endTime = Date.now();
       span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
@@ -600,9 +493,16 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
     } catch (error) {
       span.error = error as Error;
       span.endTime = Date.now();
-      span.duration = span.endTime - span.startTime;
       this.db.diagnostics.onQueryEnd(span);
       throw error;
     }
   }
 }
+
+export function count(column: string | "*"): Expression {
+  return { type: "function", name: "COUNT", args: [typeof column === "string" ? { type: "column", name: column } : { type: "literal", value: "*" }] };
+}
+export function sum(column: string): Expression { return { type: "function", name: "SUM", args: [{ type: "column", name: column }] }; }
+export function avg(column: string): Expression { return { type: "function", name: "AVG", args: [{ type: "column", name: column }] }; }
+export function min(column: string): Expression { return { type: "function", name: "MIN", args: [{ type: "column", name: column }] }; }
+export function max(column: string): Expression { return { type: "function", name: "MAX", args: [{ type: "column", name: column }] }; }

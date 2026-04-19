@@ -25,7 +25,7 @@ describe("Row-Level Security (RLS)", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", "title", "userId" FROM "posts" WHERE ("posts"."userId" = ?)',
+      expect.objectContaining({ sql: 'SELECT "id", "title", "userId" FROM "posts" WHERE ("posts"."userId" = ?)' }),
       [123]
     );
   });
@@ -39,7 +39,7 @@ describe("Row-Level Security (RLS)", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", "title", "userId" FROM "posts" WHERE (("id" > ?) AND ("posts"."userId" = ?))',
+      expect.objectContaining({ sql: 'SELECT "id", "title", "userId" FROM "posts" WHERE (("id" > ?) AND ("posts"."userId" = ?))' }),
       [10, 456]
     );
   });

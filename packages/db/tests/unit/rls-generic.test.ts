@@ -26,7 +26,7 @@ describe("Generic Row-Level Security (RLS)", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE ("id" = ?)'),
+      expect.objectContaining({ sql: expect.stringContaining('WHERE ("id" = ?)') }),
       [999]
     );
   });
@@ -53,8 +53,8 @@ describe("Generic Row-Level Security (RLS)", () => {
       .withContext({})
       .execute();
 
-    const [sql, params] = (mockDriver.execute as any).mock.calls.at(-1);
-    expect(sql).toContain('WHERE (("id" > ?) AND ("status" = ?))');
+    const [query, params] = (mockDriver.execute as any).mock.calls.at(-1);
+    expect(query.sql).toContain('WHERE (("id" > ?) AND ("status" = ?))');
     expect(params).toEqual([100, "active"]);
   });
 });

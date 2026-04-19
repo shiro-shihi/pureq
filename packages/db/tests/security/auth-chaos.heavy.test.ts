@@ -2,12 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DB } from "../../src/core/db.js";
 import { table, column } from "../../src/schema/dsl.js";
 import type { Driver, QueryResult } from "../../src/drivers/types.js";
-import { PostgresDriver } from "../../src/drivers/postgres.js";
+import { PostgresDriver } from "../../src/drivers/adapters/postgres-node.js";
 import { GenericCompiler } from "../../src/builder/compiler.js";
 
 describe("Ultimate Chaos & Red-Team Legendary Assault", () => {
   const mockDriver: Driver = {
-    execute: vi.fn().mockResolvedValue({ rows: [] } as QueryResult),
+    execute: vi.fn().mockImplementation(async (query) => {
+        return { rows: [] } as QueryResult;
+    }),
     transaction: vi.fn(),
   };
   const db = new DB(mockDriver);
@@ -24,7 +26,12 @@ describe("Ultimate Chaos & Red-Team Legendary Assault", () => {
     content: column.string(),
   });
 
-  const getLatestQuery = () => (mockDriver.execute as any).mock.calls.at(-1);
+  const getLatestQuery = () => {
+    const call = (mockDriver.execute as any).mock.calls.at(-1);
+    const query = call[0];
+    const sql = typeof query === "string" ? query : query.sql;
+    return [sql, call[1]];
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
