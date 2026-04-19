@@ -35,7 +35,7 @@ describe("Query Builder - JOIN", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "users"."id" AS "__users__id", "users"."name" AS "__users__name", "posts"."id" AS "__posts__id", "posts"."title" AS "__posts__title", "posts"."userId" AS "__posts__userId" FROM "users" INNER JOIN "posts" ON ("users"."id" = "posts"."userId")',
+      expect.objectContaining({ sql: 'SELECT "users"."id" AS "__users__id", "users"."name" AS "__users__name", "posts"."id" AS "__posts__id", "posts"."title" AS "__posts__title", "posts"."userId" AS "__posts__userId" FROM "users" INNER JOIN "posts" ON ("users"."id" = "posts"."userId")' }),
       []
     );
   });

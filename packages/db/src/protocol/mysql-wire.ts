@@ -140,13 +140,13 @@ export class MysqlProtocol {
     return result;
   }
 
-  encodeHandshakeResponse(user: string, database: string, authResponse: Uint8Array): Uint8Array {
+  encodeHandshakeResponse(user: string, database: string, authResponse: Uint8Array, pluginName: string = "mysql_native_password"): Uint8Array {
     let clientFlags = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA;
     if (database) clientFlags |= CLIENT_CONNECT_WITH_DB;
 
     const userBytes = this.encoder.encode(user);
     const dbBytes = database ? this.encoder.encode(database) : new Uint8Array(0);
-    const pluginBytes = this.encoder.encode("mysql_native_password");
+    const pluginBytes = this.encoder.encode(pluginName);
 
     let size = 4 + 4 + 1 + 23 + userBytes.length + 1;
     size += this.lenEncLength(authResponse.length) + authResponse.length;
@@ -175,6 +175,20 @@ export class MysqlProtocol {
     payload.set(pluginBytes, offset); offset += pluginBytes.length;
     payload[offset++] = 0;
 
+    return payload;
+  }
+
+  encodeSSLRequest(database?: string): Uint8Array {
+    let clientFlags = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA;
+    if (database) clientFlags |= CLIENT_CONNECT_WITH_DB;
+
+    const payload = new Uint8Array(32);
+    const view = new DataView(payload.buffer);
+    
+    view.setUint32(0, clientFlags, true);
+    view.setUint32(4, 0xffffff, true);
+    payload[8] = 33;
+    
     return payload;
   }
 

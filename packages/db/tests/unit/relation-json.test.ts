@@ -52,10 +52,10 @@ describe("Relations & JSON Querying", () => {
       }
     });
     
-    const [sql] = (mockDriver.execute as any).mock.calls.at(-1);
-    expect(sql).toContain('INNER JOIN "users" ON ("posts"."authorId" = "users"."id")');
-    expect(sql).toContain('AS "__author__id"');
-    expect(sql).toContain('AS "__author__name"');
+    const [query] = (mockDriver.execute as any).mock.calls.at(-1);
+    expect(query.sql).toContain('INNER JOIN "users" ON ("posts"."authorId" = "users"."id")');
+    expect(query.sql).toContain('AS "__author__id"');
+    expect(query.sql).toContain('AS "__author__name"');
   });
 
   it("should safely query JSON fields using .at()", async () => {
@@ -64,9 +64,9 @@ describe("Relations & JSON Querying", () => {
       .where(posts.columns.metadata.at("tags.category"), "=", "tech")
       .execute();
 
-    const [sql, params] = (mockDriver.execute as any).mock.calls.at(-1);
+    const [query, params] = (mockDriver.execute as any).mock.calls.at(-1);
     // posts.columns.metadata.at("tags.category") -> ("metadata" ->> ?)
-    expect(sql).toContain('("metadata" ->> ?)');
+    expect(query.sql).toContain('("metadata" ->> ?)');
     expect(params).toContain("tags.category");
     expect(params).toContain("tech");
   });

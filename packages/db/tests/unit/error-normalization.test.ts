@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { PostgresDriver } from "../../src/drivers/postgres.js";
+import { PostgresDriver } from "../../src/drivers/adapters/postgres-node.js";
 import { DBError } from "../../src/errors/db-error.js";
 
 describe("Error Normalization (Postgres)", () => {

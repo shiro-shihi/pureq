@@ -1,5 +1,5 @@
-import type { Driver, QueryResult } from "./types.js";
-import { normalizeSqliteError } from "./utils.js";
+import type { Driver, QueryResult, QueryPayload } from "../types.js";
+import { normalizeSqliteError } from "../utils.js";
 
 interface BetterSqlite3Database {
   prepare(sql: string): any;
@@ -9,7 +9,9 @@ interface BetterSqlite3Database {
 export class BetterSqlite3Driver implements Driver {
   constructor(private readonly db: BetterSqlite3Database) {}
 
-  async execute<T = unknown>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
+  async execute<T = unknown>(query: QueryPayload, params: unknown[] = []): Promise<QueryResult<T>> {
+    const sql = typeof query === "string" ? query : query.sql;
+
     try {
       const stmt = this.db.prepare(sql);
       

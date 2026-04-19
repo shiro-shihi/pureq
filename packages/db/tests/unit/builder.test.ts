@@ -25,7 +25,7 @@ describe("Query Builder", () => {
     await db.select().from(users).where("name", "=", "John").limit(10).execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT * FROM "users" WHERE ("name" = ?) LIMIT 10',
+      expect.objectContaining({ sql: 'SELECT * FROM "users" WHERE ("name" = ?) LIMIT 10' }),
       ["John"]
     );
   });
@@ -40,7 +40,7 @@ describe("Query Builder", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT * FROM "users" WHERE (("name" = ?) AND ("age" > ?)) ORDER BY "name" DESC',
+      expect.objectContaining({ sql: 'SELECT * FROM "users" WHERE (("name" = ?) AND ("age" > ?)) ORDER BY "name" DESC' }),
       ["John", 18]
     );
   });
@@ -67,7 +67,7 @@ describe("Query Builder", () => {
     await db.insert(users).values({ name: "Alice", age: 25 }).execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'INSERT INTO "users" ("name", "age") VALUES (?, ?)',
+      expect.objectContaining({ sql: 'INSERT INTO "users" ("name", "age") VALUES (?, ?)' }),
       ["Alice", 25]
     );
   });
@@ -80,7 +80,7 @@ describe("Query Builder", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'UPDATE "users" SET "age" = ? WHERE ("name" = ?)',
+      expect.objectContaining({ sql: 'UPDATE "users" SET "age" = ? WHERE ("name" = ?)' }),
       [26, "Alice"]
     );
   });
@@ -89,7 +89,7 @@ describe("Query Builder", () => {
     await db.delete(users).where("age", "<", 18).execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'DELETE FROM "users" WHERE ("age" < ?)',
+      expect.objectContaining({ sql: 'DELETE FROM "users" WHERE ("age" < ?)' }),
       [18]
     );
   });
@@ -104,7 +104,7 @@ describe("Query Builder", () => {
     await db.select().from(sensitive).withContext({ scopes: [] }).execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", (SUBSTR("sensitive"."email", ?, ?) || ?), "secret" FROM "sensitive"',
+      expect.objectContaining({ sql: 'SELECT "id", (SUBSTR("sensitive"."email", ?, ?) || ?), "secret" FROM "sensitive"' }),
       [1, 3, "***"]
     );
   });

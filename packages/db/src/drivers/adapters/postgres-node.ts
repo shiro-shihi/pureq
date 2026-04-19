@@ -1,5 +1,5 @@
-import type { Driver, QueryResult } from "./types.js";
-import { normalizePostgresError } from "./utils.js";
+import type { Driver, QueryResult, QueryPayload } from "../types.js";
+import { normalizePostgresError } from "../utils.js";
 
 interface PostgresClient {
   query(sql: string, params: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
@@ -9,11 +9,14 @@ interface PostgresClient {
 export class PostgresDriver implements Driver {
   constructor(private readonly client: PostgresClient) {}
 
-  async execute<T = unknown>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
+  async execute<T = unknown>(query: QueryPayload, params: unknown[] = []): Promise<QueryResult<T>> {
+    const sql = typeof query === "string" ? query : query.sql;
+
     // Security: PostgreSQL has a limit of 65,535 (uint16) parameters per query.
-    // Exceeding this limit causes a crash or silent failure in some drivers.
-    if (params.length > 65535) {
-      throw new Error(`Security Exception: Too many query parameters (${params.length}). PostgreSQL limit is 65,535.`);
+    // Count all parameters including elements in nested arrays (for IN clauses).
+    const totalParams = params.reduce((acc: number, p) => acc + (Array.isArray(p) ? p.length : 1), 0);
+    if (totalParams > 65535) {
+      throw new Error(`Security Exception: Too many query parameters (${totalParams}). PostgreSQL limit is 65,535.`);
     }
 
     try {

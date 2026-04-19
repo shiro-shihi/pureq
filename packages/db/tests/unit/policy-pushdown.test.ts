@@ -31,7 +31,7 @@ describe("Policy Push-down", () => {
 
     // salary should be removed because user doesn't have 'hr' scope
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", "name", "email" FROM "users"',
+      expect.objectContaining({ sql: 'SELECT "id", "name", "email" FROM "users"' }),
       []
     );
   });
@@ -45,7 +45,7 @@ describe("Policy Push-down", () => {
 
     // email should be removed because user doesn't have 'admin' scope
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", "name", "salary" FROM "users"',
+      expect.objectContaining({ sql: 'SELECT "id", "name", "salary" FROM "users"' }),
       []
     );
   });
@@ -58,7 +58,7 @@ describe("Policy Push-down", () => {
       .execute();
 
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "id", "name", "email", "salary" FROM "users"',
+      expect.objectContaining({ sql: 'SELECT "id", "name", "email", "salary" FROM "users"' }),
       []
     );
   });
@@ -72,7 +72,7 @@ describe("Policy Push-down", () => {
 
     // email should be filtered out even if explicitly requested, if no scope matches
     expect(mockDriver.execute).toHaveBeenCalledWith(
-      'SELECT "name" FROM "users"',
+      expect.objectContaining({ sql: 'SELECT "name" FROM "users"' }),
       []
     );
   });

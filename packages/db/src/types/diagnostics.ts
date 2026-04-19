@@ -1,10 +1,16 @@
+import { type Statement } from "../builder/ast.js";
+import { type QueryContext } from "./context.js";
+
 export interface QuerySpan {
+  id: string;
+  statement?: Statement;
   sql: string;
   params: unknown[];
   startTime: number;
   endTime?: number;
   duration?: number;
   error?: Error;
+  context?: QueryContext | undefined;
   policiesApplied?: string[];
 }
 
