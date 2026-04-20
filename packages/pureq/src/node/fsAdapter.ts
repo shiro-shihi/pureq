@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { writeFile, readFile, unlink, readdir, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { OfflineQueueStorageAdapter, QueuedRequest } from "../middleware/offlineQueue.js";
@@ -23,7 +24,7 @@ export class FileSystemQueueStorageAdapter implements OfflineQueueStorageAdapter
     try {
       await this.ensureDir();
       const files = await readdir(this.dir);
-      const jsonFiles = files.filter((f) => f.endsWith(".json"));
+      const jsonFiles = files.filter((f: string) => f.endsWith(".json"));
       
       const results: QueuedRequest[] = [];
       for (const file of jsonFiles) {
@@ -65,7 +66,7 @@ export class FileSystemQueueStorageAdapter implements OfflineQueueStorageAdapter
   async size(): Promise<number> {
     try {
       const files = await readdir(this.dir);
-      return files.filter((f) => f.endsWith(".json")).length;
+      return files.filter((f: string) => f.endsWith(".json")).length;
     } catch {
       return 0;
     }

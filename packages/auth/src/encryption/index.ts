@@ -1,122 +1,92 @@
+import { generateSecureId } from "@pureq/pureq";
+import { base64Encode, base64Decode } from "../shared/index.js";
 import type { AuthEncryption, AuthEncryptionOptions } from "../shared/index.js";
 
-const MIN_SECRET_BYTES = 32;
-const DEFAULT_PBKDF2_ITERATIONS = 100_000;
-
-function encodeBase64(bytes: Uint8Array): string {
-  if (typeof btoa === "function") {
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
-    }
-    return btoa(binary);
-  }
-
-  const bufferCtor = (globalThis as { Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } } }).Buffer;
-  if (bufferCtor) {
-    return bufferCtor.from(bytes).toString("base64");
-  }
-
-  throw new Error("pureq/auth: base64 encoder is unavailable in this runtime");
-}
-
-function decodeBase64(base64: string): Uint8Array {
-  if (typeof atob === "function") {
-    const binary = atob(base64);
-    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  }
-
-  const bufferCtor = (globalThis as { Buffer?: { from(value: string, encoding: string): { values(): Iterable<number> } } }).Buffer;
-  if (bufferCtor) {
-    return Uint8Array.from(bufferCtor.from(base64, "base64").values());
-  }
-
-  throw new Error("pureq/auth: base64 decoder is unavailable in this runtime");
-}
-
 /**
- * FEAT-H7: AES-256-GCM encryption using Web Crypto API.
- * Zero dependencies. Works in browsers, Node.js, Cloudflare Workers, Deno.
+ * Pureq Universal Auth Encryption
+ * AES-GCM 256-bit with PBKDF2 Key Derivation and Dynamic Salt.
  */
-export function createAuthEncryption(secret: string, options: AuthEncryptionOptions = {}): AuthEncryption {
+
+export async function encrypt(data: string, secret: string): Promise<string> {
   const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
+  const rawData = encoder.encode(data);
+  
+  // 1. Generate 16-byte random salt for PBKDF2
+  const salt = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(salt);
 
-  const secretBytes = encoder.encode(secret);
-  if (secretBytes.byteLength < MIN_SECRET_BYTES) {
-    throw new Error("pureq/auth: encryption secret must be at least 32 bytes (256-bit)");
-  }
+  // 2. Derive Key using PBKDF2
+  const key = await deriveKey(secret, salt);
 
-  const iterations = options.pbkdf2Iterations ?? DEFAULT_PBKDF2_ITERATIONS;
-  if (!Number.isInteger(iterations) || iterations < DEFAULT_PBKDF2_ITERATIONS) {
-    throw new Error("pureq/auth: pbkdf2Iterations must be an integer >= 100000");
-  }
+  // 3. Encrypt using AES-GCM
+  const iv = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(iv);
 
-  let cachedKey: CryptoKey | null = null;
+  const encrypted = await globalThis.crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    rawData
+  );
 
-  const deriveKey = async (): Promise<CryptoKey> => {
-    if (cachedKey) {
-      return cachedKey;
-    }
+  // 4. Combine: IV (12) + Salt (16) + Payload
+  const combined = new Uint8Array(12 + 16 + encrypted.byteLength);
+  combined.set(iv, 0);
+  combined.set(salt, 12);
+  combined.set(new Uint8Array(encrypted), 28);
 
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw",
-      secretBytes,
-      { name: "PBKDF2" },
-      false,
-      ["deriveKey"]
-    );
+  // 5. Return as Base64 (Universal)
+  return base64Encode(String.fromCharCode(...combined));
+}
 
-    cachedKey = await crypto.subtle.deriveKey(
-      {
-        name: "PBKDF2",
-        salt: encoder.encode("pureq-auth-encryption-v1"),
-        iterations,
-        hash: "SHA-256",
-      },
-      keyMaterial,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"]
-    );
+export async function decrypt(encryptedBase64: string, secret: string): Promise<string> {
+  const combined = new Uint8Array(base64Decode(encryptedBase64).split("").map(c => c.charCodeAt(0)));
+  
+  const iv = new Uint8Array(combined.slice(0, 12));
+  const salt = new Uint8Array(combined.slice(12, 28));
+  const data = new Uint8Array(combined.slice(28));
 
-    return cachedKey;
-  };
+  const key = await deriveKey(secret, salt);
 
+  const decrypted = await globalThis.crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    data
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+
+export function createAuthEncryption(secret: string, options: AuthEncryptionOptions = {}): AuthEncryption {
   return {
-    async encrypt(payload: unknown): Promise<string> {
-      const key = await deriveKey();
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const plaintext = encoder.encode(JSON.stringify(payload));
-
-      const ciphertext = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        key,
-        plaintext
-      );
-
-      const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
-      combined.set(iv);
-      combined.set(new Uint8Array(ciphertext), iv.length);
-
-      return encodeBase64(combined);
+    async encrypt(data: any) {
+      return encrypt(JSON.stringify(data), secret);
     },
-
-    async decrypt<T = unknown>(token: string): Promise<T> {
-      const key = await deriveKey();
-      const combined = decodeBase64(token);
-      const iv = combined.slice(0, 12);
-      const ciphertext = combined.slice(12);
-
-      const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        key,
-        ciphertext
-      );
-
-      return JSON.parse(decoder.decode(plaintext)) as T;
-    },
+    async decrypt(encrypted: string) {
+      return JSON.parse(await decrypt(encrypted, secret));
+    }
   };
 }
 
-export type { AuthEncryption } from "../shared/index.js";
+async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const baseKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+
+  return globalThis.crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt.buffer as ArrayBuffer,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}

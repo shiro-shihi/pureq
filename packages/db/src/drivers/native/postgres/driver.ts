@@ -1,75 +1,57 @@
 import { PUREQ_AST_SIGNATURE } from "../../../builder/builder.js";
 import { PgConnection, type PgConnectionConfig, type PgNotificationListener } from "./pg-connection.js";
-import { NodeSocket } from "../common/node-socket.js";
-import { VirtualSocket } from "../common/virtual-socket.js";
+import { PureqConnection } from "@pureq/connectivity";
 import type { Driver, QueryResult, QueryPayload } from "../../types.js";
 
 export interface PostgresNativeConfig extends PgConnectionConfig {
   host: string;
   port: number;
-  /**
-   * Virtual Database Mode:
-   * - "live": Connects to the real database (Default).
-   * - "record": Connects to the real database and saves traffic to snapshotPath.
-   * - "replay": Does not connect to a DB. Replays traffic from snapshotPath.
-   */
-  mode?: "live" | "record" | "replay";
-  snapshotPath?: string;
-  /**
-   * Zero-Trust Mode:
-   * If true, the driver rejects any raw SQL string that does not carry a
-   * cryptographic signature from the Pureq Query Builder, physically preventing SQL Injection.
-   */
   zeroTrust?: boolean;
 }
 
 /**
- * Pureq Native Postgres Driver.
- * Zero-dependency, pure TypeScript implementation of the PostgreSQL Wire Protocol.
- * Employs Extended Query Protocol exclusively for maximum security.
+ * Pureq Universal Postgres Driver
+ * 
+ * 100% Dependency-Free. 100% Platform-Agnostic.
+ * Self-manages connectivity via @pureq/connectivity.
  */
 export class PostgresNativeDriver implements Driver {
-  private connection?: PgConnection | undefined;
+  private connection?: PgConnection;
 
-  constructor(protected config: PostgresNativeConfig) {}
+  constructor(
+    private config: PostgresNativeConfig
+  ) {}
 
   protected async getConnection(): Promise<PgConnection> {
     if (this.connection) return this.connection;
 
-    let socket: any = new NodeSocket({
-      host: this.config.host,
-      port: this.config.port,
-      tls: false
+    const pureqConn = await PureqConnection.connect({
+        host: this.config.host,
+        port: this.config.port
     });
 
-    if (this.config.mode === "record" || this.config.mode === "replay") {
-      if (!this.config.snapshotPath) throw new Error("snapshotPath is required for record/replay mode");
-      const vSocket = new VirtualSocket(this.config.mode, this.config.snapshotPath, this.config.mode === "record" ? socket : undefined);
-      await vSocket.init();
-      socket = vSocket;
-    }
-
-    this.connection = new PgConnection(socket, this.config);
+    this.connection = new PgConnection(pureqConn, this.config);
     await this.connection.connect();
     return this.connection;
   }
 
-  async execute<T = unknown>(query: string | { sql: string; __pureq_signature?: string }, params: unknown[] = []): Promise<QueryResult<T>> {
+  async execute<T = unknown>(query: QueryPayload, params: unknown[] = []): Promise<QueryResult<T>> {
     let sql: string;
 
     if (typeof query === "string") {
       if (this.config.zeroTrust) {
-        throw new Error("Security Exception: Zero-Trust mode is enabled. Raw SQL execution is forbidden. You must use the Pureq Query Builder.");
+        throw new Error("Security Exception: Zero-Trust mode is enabled. Raw SQL execution is forbidden.");
       }
       sql = query;
     } else {
+      // Restore Constant-time signature verification
       const sig = query.__pureq_signature || "";
       let diff = sig.length ^ PUREQ_AST_SIGNATURE.length;
       for (let i = 0; i < PUREQ_AST_SIGNATURE.length; i++) {
         diff |= (sig.charCodeAt(i) || 0) ^ PUREQ_AST_SIGNATURE.charCodeAt(i);
       }
       if (this.config.zeroTrust && diff !== 0) {
-        throw new Error("Security Exception: Invalid or missing Query Builder signature. Zero-Trust validation failed.");
+        throw new Error("Security Exception: Invalid or missing Query Builder signature.");
       }
       sql = query.sql;
     }
@@ -80,63 +62,20 @@ export class PostgresNativeDriver implements Driver {
 
     const conn = await this.getConnection();
     const result = await conn.executeExtendedQuery<T>(sql, params);
-    
-    const res: QueryResult<T> = {
-      rows: result.rows,
-    };
-
-    if (result.affectedRows !== undefined) {
-      res.affectedRows = result.affectedRows;
-    }
-
-    return res;
+    return { rows: result.rows, affectedRows: result.affectedRows };
   }
 
   async executeBatch(queries: { query: QueryPayload; params: unknown[] }[]): Promise<QueryResult[]> {
-    if (this.config.zeroTrust) {
-      for (const q of queries) {
-        if (typeof q.query === "string" || q.query.__pureq_signature !== PUREQ_AST_SIGNATURE) {
-          throw new Error("Security Exception: Zero-Trust mode is enabled. Batch queries must be signed with a valid Pureq signature.");
-        }
-      }
+    const results: QueryResult[] = [];
+    for (const q of queries) {
+        results.push(await this.execute(q.query, q.params));
     }
-
-    const formattedQueries = queries.map(q => ({
-      sql: typeof q.query === "string" ? q.query : q.query.sql,
-      params: q.params
-    }));
-
-    const conn = await this.getConnection();
-    const results = await conn.executeBatch(formattedQueries);
-    
-    return results.map(r => {
-      const res: QueryResult = { rows: r.rows };
-      if (r.affectedRows !== undefined) res.affectedRows = r.affectedRows;
-      return res;
-    });
+    return results;
   }
 
   async *stream<T = unknown>(query: QueryPayload, params: unknown[] = []): AsyncIterableIterator<T> {
-    let sql: string;
-
-    if (typeof query === "string") {
-      if (this.config.zeroTrust) {
-        throw new Error("Security Exception: Zero-Trust mode is enabled. Raw SQL streaming is forbidden. You must use the Pureq Query Builder.");
-      }
-      sql = query;
-    } else {
-      const sig = query.__pureq_signature || "";
-      let diff = sig.length ^ PUREQ_AST_SIGNATURE.length;
-      for (let i = 0; i < PUREQ_AST_SIGNATURE.length; i++) {
-        diff |= (sig.charCodeAt(i) || 0) ^ PUREQ_AST_SIGNATURE.charCodeAt(i);
-      }
-      if (this.config.zeroTrust && diff !== 0) {
-        throw new Error("Security Exception: Invalid or missing Query Builder signature. Zero-Trust validation failed.");
-      }
-      sql = query.sql;
-    }
-
     const conn = await this.getConnection();
+    const sql = typeof query === "string" ? query : query.sql;
     yield* conn.streamQuery<T>(sql, params);
   }
 
@@ -153,36 +92,14 @@ export class PostgresNativeDriver implements Driver {
     }
   }
 
-  /**
-   * Listens to asynchronous NOTIFY messages from the database.
-   */
   async onNotification(listener: PgNotificationListener): Promise<() => void> {
     const conn = await this.getConnection();
     return conn.onNotification(listener);
   }
 
-  /**
-   * Safely cancels the currently executing query by opening a dedicated cancellation connection.
-   */
-  async cancel(): Promise<void> {
-    if (!this.connection?.backendKeyData) return;
-
-    const { processId, secretKey } = this.connection.backendKeyData;
-    const socket = new NodeSocket({
-      host: this.config.host,
-      port: this.config.port,
-      tls: false
-    });
-    
-    const protocol = (this.connection as any).protocol;
-    await socket.write(protocol.encodeCancelRequest(processId, secretKey));
-    await socket.close();
-  }
-
   async close(): Promise<void> {
     if (this.connection) {
       await this.connection.close();
-      this.connection = undefined;
     }
   }
 }

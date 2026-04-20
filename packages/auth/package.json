@@ -1,6 +1,6 @@
 {
   "name": "@pureq/auth",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Authentication and token management middleware for pureq",
   "type": "module",
   "main": "./dist/index.js",
@@ -128,15 +128,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --build tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:passkey-lifecycle:coverage": "vitest run -c vitest.passkey-lifecycle.config.ts",
     "test:redteam": "vitest run tests/auth-breaker.redteam.test.ts",
     "test:watch": "vitest",
     "test:heavy": "vitest run tests/auth-assault.heavy.test.ts tests/auth-chaos.heavy.test.ts tests/auth-defense-saturation.heavy.test.ts tests/auth-bank-gafam.assault.heavy.test.ts tests/auth-adversarial-zero-day.heavy.test.ts",
     "test:assault": "pnpm run test:contract && pnpm run test:heavy && pnpm run test:ci",
-    "test:unit": "vitest run tests --exclude tests/*.integration.test.ts --passWithNoTests",
-    "test:integration": "vitest run integration.test.ts --passWithNoTests",
-    "test:contract": "vitest run tests/storage-contract.test.ts tests/*contract*.integration.test.ts --passWithNoTests",
+    "test:unit": "vitest run tests --exclude tests/*.integration.test.ts",
+    "test:integration": "vitest run integration.test.ts",
+    "test:contract": "vitest run tests/storage-contract.test.ts tests/*contract*.integration.test.ts",
     "test:ci": "pnpm run test:unit && pnpm run test:integration && pnpm run typecheck"
   },
   "keywords": [

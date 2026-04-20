@@ -1,0 +1,20 @@
+import { ArraySchema } from "./composite/array.js";
+import { ObjectSchema } from "./composite/object.js";
+import { NullableSchema } from "./composite/nullable.js";
+import { OptionalSchema } from "./composite/optional.js";
+import { GuardSchema } from "./composite/guard.js";
+import type { PolicySchema } from "./base.js";
+import { BooleanSchema } from "./primitive/boolean.js";
+import { NumberSchema } from "./primitive/number.js";
+import { StringSchema } from "./primitive/string.js";
+import type { GuardFunction, GuardOptions } from "../guard/guard.js";
+export declare const v: {
+    string: () => StringSchema;
+    number: () => NumberSchema;
+    boolean: () => BooleanSchema;
+    object: <TShape extends Record<string, PolicySchema<unknown>>>(shape: TShape) => ObjectSchema<TShape>;
+    array: <TItemSchema extends PolicySchema<unknown>>(schema: TItemSchema) => ArraySchema<TItemSchema>;
+    nullable: <T>(schema: PolicySchema<T>) => NullableSchema<T>;
+    optional: <T>(schema: PolicySchema<T>) => OptionalSchema<T>;
+    guard: <T>(fn: GuardFunction<T>, nameOrOptions?: string | GuardOptions) => GuardSchema<T> & ((value: T) => import("../index.js").Result<T, import("../index.js").ValidationError> | Promise<import("../index.js").Result<T, import("../index.js").ValidationError>>);
+};

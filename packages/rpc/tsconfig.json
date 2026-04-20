@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ESNext", "DOM"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "composite": true,
+    "paths": {
+      "@pureq/db": ["../db/src/index.ts"],
+      "@pureq/validation": ["../validation/src/index.ts"],
+      "@pureq/connectivity": ["../connectivity/src/index.ts"]
+    }
+  },
+  "references": [
+    { "path": "../db" },
+    { "path": "../validation" },
+    { "path": "../connectivity" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

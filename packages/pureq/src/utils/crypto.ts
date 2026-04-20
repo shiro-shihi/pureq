@@ -1,104 +1,100 @@
 /**
- * Generates a cryptographically strong random ID.
- * Prefers crypto.randomUUID, falls back to crypto.getRandomValues,
- * and only uses Math.random as a last resort for environments
- * without any Web Crypto API support.
+ * Pureq Universal Security Utilities
+ * Zero-dependency. 100% Secure.
  */
-export function generateSecureId(prefix?: string): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    const value = crypto.randomUUID();
-    return prefix ? `${prefix}-${value}` : value;
+
+/**
+ * Generates a cryptographically secure random ID.
+ * FAILS SAFE: Throws an error if a CSPRNG is not available.
+ */
+export function generateSecureId(prefixOrBytes: string | number = 32): string {
+  if (typeof prefixOrBytes === "string") {
+    if (typeof globalThis.crypto !== "undefined" && globalThis.crypto.randomUUID) {
+      return `${prefixOrBytes}-${globalThis.crypto.randomUUID()}`;
+    }
+    // Fallback to random values if randomUUID is missing
+    const array = new Uint8Array(16);
+    if (typeof globalThis.crypto === "undefined" || !globalThis.crypto.getRandomValues) {
+       throw new Error("[Pureq Security Exception] CSPRNG is not available.");
+    }
+    globalThis.crypto.getRandomValues(array);
+    const hex = Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${prefixOrBytes}-${hex}`;
   }
 
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    return prefix ? `${prefix}-${hex}` : hex;
+  const numBytes = (typeof prefixOrBytes === "number" && !isNaN(prefixOrBytes) && prefixOrBytes > 0) ? prefixOrBytes : 32;
+
+  if (typeof globalThis.crypto === "undefined" || !globalThis.crypto.getRandomValues) {
+    throw new Error("[Pureq Security Exception] CSPRNG is not available.");
   }
 
-  // Last resort fallback for legacy environments without Web Crypto API.
-  // This is NOT cryptographically secure.
-  return `${prefix ?? "id"}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  const bufferCtor = (globalThis as { Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } } }).Buffer;
-  if (typeof btoa !== "function" && bufferCtor) {
-    return bufferCtor.from(bytes).toString("base64");
-  }
-
-  if (typeof btoa !== "function") {
-    throw new Error("pureq: base64 encoder is unavailable in this runtime");
-  }
-
-  const chunkSize = 0x8000;
-  let binary = "";
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-
-  return btoa(binary);
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  if (typeof atob === "function") {
-    const raw = atob(value);
-    return Uint8Array.from(raw, (char) => char.charCodeAt(0));
-  }
-
-  const bufferCtor = (globalThis as { Buffer?: { from(value: string, encoding: string): { values(): Iterable<number> } } }).Buffer;
-  if (bufferCtor) {
-    return Uint8Array.from(bufferCtor.from(value, "base64").values());
-  }
-
-  throw new Error("pureq: base64 decoder is unavailable in this runtime");
+  const array = new Uint8Array(numBytes);
+  globalThis.crypto.getRandomValues(array);
+  
+  return Array.from(array)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**
- * Encrypts a string using AES-GCM with a provided CryptoKey.
- * Returns a base64 string containing [iv:base64]:[ciphertext:base64].
+ * Hardened Timing-Safe Comparison.
+ * Optimized for performance while maintaining constant-time properties for equal lengths.
  */
-export async function encrypt(text: string, key: CryptoKey): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+export function timingSafeEqual(a: string, b: string): boolean {
+  const lenA = a.length;
+  const lenB = b.length;
   
-  const ciphertext = await crypto.subtle.encrypt(
+  let diff = lenA ^ lenB;
+  const maxLen = Math.max(lenA, lenB);
+  
+  for (let i = 0; i < maxLen; i++) {
+    const charA = i < lenA ? a.charCodeAt(i) : 0;
+    const charB = i < lenB ? b.charCodeAt(i) : 0;
+    diff |= charA ^ charB;
+  }
+  
+  return diff === 0;
+}
+
+/**
+ * Encrypts a string using AES-GCM.
+ * Format: IV:Ciphertext (Base64)
+ */
+export async function encrypt(data: string, key: CryptoKey): Promise<string> {
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(data);
+  
+  const encrypted = await globalThis.crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    data
+    encoded
   );
-
-  const ivBase64 = uint8ArrayToBase64(iv);
-  const cipherBase64 = uint8ArrayToBase64(new Uint8Array(ciphertext));
-
-  return `${ivBase64}:${cipherBase64}`;
+  
+  const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+  const encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+  
+  return `${ivHex}:${encryptedBase64}`;
 }
 
 /**
- * Decrypts a base64 string (formatted as iv:ciphertext) using AES-GCM and a CryptoKey.
+ * Decrypts a string using AES-GCM.
+ * Expects: IV:Ciphertext (Base64)
  */
 export async function decrypt(encryptedData: string, key: CryptoKey): Promise<string> {
-  const [ivBase64, cipherBase64] = encryptedData.split(":");
-  if (!ivBase64 || !cipherBase64) {
+  const parts = encryptedData.split(":");
+  if (parts.length !== 2) {
     throw new Error("pureq: invalid encrypted data format");
   }
-
-  try {
-    const iv = new Uint8Array(base64ToBytes(ivBase64));
-    const ciphertext = new Uint8Array(base64ToBytes(cipherBase64));
-
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      ciphertext
-    );
-
-    return new TextDecoder().decode(decrypted);
-  } catch {
-    throw new Error("pureq: invalid encrypted payload (base64 decode failed)");
-  }
+  
+  const [ivHex, ciphertextBase64] = parts;
+  const iv = new Uint8Array(ivHex!.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  const ciphertext = new Uint8Array(atob(ciphertextBase64!).split("").map(c => c.charCodeAt(0)));
+  
+  const decrypted = await globalThis.crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+  
+  return new TextDecoder().decode(decrypted);
 }

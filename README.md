@@ -31,6 +31,16 @@ Pureq is evolving from a set of modular libraries into a **Policy-First Full-sta
 
 Read more about our vision in the [Ecosystem Strategy & Roadmap](./docs/STRATEGY.md).
 
+## Fortress Hardening (v1.0)
+
+Pureq v1.0 introduces **Fortress Hardening**, a suite of proactive security measures designed to eliminate entire classes of vulnerabilities by design:
+
+- **JWT Core Hardening:** Mandatory algorithm whitelisting and strict claim validation (`exp`, `nbf`, `iss`, `aud`) enforced at the byte level.
+- **Open Redirect Protection:** Domain whitelisting integrated directly into the Auth route handlers.
+- **DoS Mitigation:** Dynamic exponential buffer growth with strict limits in RPC transport, preventing memory exhaustion attacks.
+- **Side-Channel Immunity:** 100% constant-time comparisons for HMAC and session verification to prevent timing leaks.
+- **Zero-Dependency Security:** Standardized on Web Crypto and Web Stream APIs across all runtimes (Node.js, Bun, Deno, Edge).
+
 ## Packages
 
 ### @pureq/pureq
@@ -101,6 +111,36 @@ Main characteristics:
 Docs:
 
 - [Package README](https://github.com/shiro-shihi/pureq/blob/main/packages/db/README.md)
+
+### @pureq/rpc
+
+Industrial-grade, manifest-driven secure data bridge for full-stack TypeScript.
+
+Main characteristics:
+
+- **Sealed Manifests:** 100% build-less query lockdown at the type level.
+- **Hyper-Codec:** Bitwise binary serialization for extreme Edge performance.
+- **Physical Masking:** Byte-level data isolation preventing sensitive data leaks.
+- **Fortress Hardened:** Built-in protection against SQLi, DoS, and Side-Channels.
+
+Docs:
+
+- [Package README](https://github.com/shiro-shihi/pureq/blob/main/packages/rpc/README.md)
+- [Binary Protocol Spec](https://github.com/shiro-shihi/pureq/blob/main/packages/rpc/docs/binary_protocol_spec.md)
+
+### @pureq/connectivity
+
+Universal TCP-to-WebStream bridge for multi-runtime environments.
+
+Main characteristics:
+
+- **Universal Connector:** Unified support for Node.js, Bun, Deno, and Cloudflare Workers.
+- **Optimized Streams:** O(1) StreamReader prevents buffer reallocation overhead.
+- **Hardened TLS:** Consistent SSL/TLS validation and hardening across all runtimes.
+
+Docs:
+
+- [Package README](https://github.com/shiro-shihi/pureq/blob/main/packages/connectivity/README.md)
 
 ## Why pureq
 

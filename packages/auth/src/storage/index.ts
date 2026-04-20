@@ -1,4 +1,5 @@
 import type { AuthStore } from "../shared/index.js";
+import { base64Encode, base64Decode } from "../shared/index.js";
 
 function getGlobalStorage(kind: "localStorage" | "sessionStorage"): Storage | null {
   try {
@@ -215,12 +216,18 @@ export function authMemoryStore(): AuthStore {
   };
 }
 
-/** Browser localStorage-backed token store. */
+/** 
+ * Browser localStorage-backed token store. 
+ * ⚠️ WARNING: Vulnerable to XSS. Use authCookieStore() in production for better security.
+ */
 export function authLocalStorage(options: { readonly prefix?: string } = {}): AuthStore {
   return createWebStorage("localStorage", options.prefix ?? "");
 }
 
-/** Browser sessionStorage-backed token store. */
+/** 
+ * Browser sessionStorage-backed token store. 
+ * ⚠️ WARNING: Vulnerable to XSS. Use authCookieStore() in production for better security.
+ */
 export function authSessionStorage(options: { readonly prefix?: string } = {}): AuthStore {
   return createWebStorage("sessionStorage", options.prefix ?? "");
 }
@@ -375,12 +382,12 @@ export function authEncryptedStore(inner: AuthStore, encryptionKey: string): Aut
     const combined = new Uint8Array(iv.length + new Uint8Array(encrypted).length);
     combined.set(iv);
     combined.set(new Uint8Array(encrypted), iv.length);
-    return btoa(String.fromCharCode(...combined));
+    return base64Encode(String.fromCharCode(...combined));
   };
 
   const decrypt = async (ciphertext: string): Promise<string> => {
     const key = await getKey();
-    const combined = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
+    const combined = Uint8Array.from(base64Decode(ciphertext), (c) => c.charCodeAt(0));
     const iv = combined.slice(0, 12);
     const data = combined.slice(12);
     const decrypted = await crypto.subtle.decrypt(

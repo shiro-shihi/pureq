@@ -1,52 +1,29 @@
+import { generateSecureId } from "@pureq/pureq";
 import type {
   AuthDatabaseAdapter,
-  AuthUser,
-  AuthAccount,
   AuthPersistedSession,
+  AuthUser,
   AuthVerificationToken,
 } from "../shared/index.js";
-export { probeAdapterCapabilities, assessAdapterReadiness } from "./capabilities.js";
-export type { AdapterCapabilityReport, AdapterReadinessOptions, AdapterReadinessReport } from "./capabilities.js";
-export {
-  createMySqlAdapter,
-  createMySqlExecutor,
-  createPostgresAdapter,
-  createPostgresExecutor,
-  createSqlAdapter,
-  getSqlSchemaStatements,
-} from "./sql.js";
-export { createPureqDbAdapter, createAuthSchemas } from "./pureq.js";
-export type {
-  MySqlClientLike,
-  PostgresClientLike,
-  SqlAdapterOptions,
-  SqlDialect,
-  SqlExecutor,
-  SqlRow,
-  SqlValue,
-  TableNames,
-} from "./sql.js";
+
+export * from "./pureq.js";
+export * from "./sql.js";
+export * from "./capabilities.js";
 
 /**
- * In-memory database adapter for testing and development.
- * FEAT-H1: Implements the full AuthDatabaseAdapter interface.
+ * Creates a simple in-memory database adapter for testing and development.
+ * SEC-SAFE: Uses generateSecureId() for IDs instead of Math.random().
  */
 export function createInMemoryAdapter(): AuthDatabaseAdapter {
   const users = new Map<string, AuthUser>();
-  const accounts: AuthAccount[] = [];
-  const sessions = new Map<string, { session: AuthPersistedSession; userId: string }>();
+  const accounts = new Map<string, any>();
+  const sessions = new Map<string, AuthPersistedSession>();
   const verificationTokens = new Map<string, AuthVerificationToken>();
-  let userIdCounter = 0;
-
-  const generateId = (): string => {
-    userIdCounter += 1;
-    return `user-${userIdCounter}-${Math.random().toString(36).slice(2, 8)}`;
-  };
 
   return {
     async createUser(user) {
-      const id = generateId();
-      const newUser: AuthUser = { ...user, id };
+      const id = (user as any).id ?? `u_${generateSecureId(16)}`;
+      const newUser = { ...user, id } as AuthUser;
       users.set(id, newUser);
       return newUser;
     },
@@ -56,29 +33,18 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
     },
 
     async getUserByEmail(email) {
-      for (const user of users.values()) {
-        if (user.email === email) {
-          return user;
-        }
-      }
-      return null;
+      return [...users.values()].find((u) => u.email === email) ?? null;
     },
 
     async getUserByAccount(provider, providerAccountId) {
-      const account = accounts.find(
-        (a) => a.provider === provider && a.providerAccountId === providerAccountId
-      );
-      if (!account) {
-        return null;
-      }
+      const account = accounts.get(`${provider}:${providerAccountId}`);
+      if (!account) return null;
       return users.get(account.userId) ?? null;
     },
 
     async updateUser(user) {
       const existing = users.get(user.id);
-      if (!existing) {
-        throw new Error(`pureq: user ${user.id} not found`);
-      }
+      if (!existing) throw new Error("pureq: user not found");
       const updated = { ...existing, ...user };
       users.set(user.id, updated);
       return updated;
@@ -86,57 +52,39 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
 
     async deleteUser(id) {
       users.delete(id);
-      const toRemove = accounts.filter((a) => a.userId === id);
-      for (const acc of toRemove) {
-        const idx = accounts.indexOf(acc);
-        if (idx !== -1) {
-          accounts.splice(idx, 1);
-        }
-      }
     },
 
     async linkAccount(account) {
-      accounts.push(account);
+      accounts.set(`${account.provider}:${account.providerAccountId}`, account);
       return account;
     },
 
     async unlinkAccount(provider, providerAccountId) {
-      const idx = accounts.findIndex(
-        (a) => a.provider === provider && a.providerAccountId === providerAccountId
-      );
-      if (idx !== -1) {
-        accounts.splice(idx, 1);
-      }
+      accounts.delete(`${provider}:${providerAccountId}`);
     },
 
     async createSession(session) {
-      sessions.set(session.sessionToken, { session, userId: session.userId });
+      sessions.set(session.sessionToken, session);
       return session;
     },
 
     async getSessionAndUser(sessionToken) {
-      const entry = sessions.get(sessionToken);
-      if (!entry) {
-        return null;
-      }
-      if (entry.session.expiresAt < new Date()) {
+      const session = sessions.get(sessionToken);
+      if (!session) return null;
+      if (session.expiresAt < new Date()) {
         sessions.delete(sessionToken);
         return null;
       }
-      const user = users.get(entry.userId);
-      if (!user) {
-        return null;
-      }
-      return { session: entry.session, user };
+      const user = users.get(session.userId);
+      if (!user) return null;
+      return { session, user };
     },
 
     async updateSession(session) {
       const existing = sessions.get(session.sessionToken);
-      if (!existing) {
-        return null;
-      }
-      const updated = { ...existing.session, ...session };
-      sessions.set(session.sessionToken, { session: updated, userId: existing.userId });
+      if (!existing) return null;
+      const updated = { ...existing, ...session };
+      sessions.set(session.sessionToken, updated);
       return updated;
     },
 
@@ -145,24 +93,16 @@ export function createInMemoryAdapter(): AuthDatabaseAdapter {
     },
 
     async createVerificationToken(token) {
-      const key = `${token.identifier}:${token.token}`;
-      verificationTokens.set(key, token);
+      verificationTokens.set(`${token.identifier}:${token.token}`, token);
       return token;
     },
 
     async useVerificationToken(params) {
       const key = `${params.identifier}:${params.token}`;
       const token = verificationTokens.get(key);
-      if (!token) {
-        return null;
-      }
+      if (!token) return null;
       verificationTokens.delete(key);
-      if (token.expiresAt < new Date()) {
-        return null;
-      }
-      return token;
+      return token.expiresAt < new Date() ? null : token;
     },
   };
 }
-
-export type { AuthDatabaseAdapter, AuthUser, AuthAccount, AuthPersistedSession, AuthVerificationToken } from "../shared/index.js";

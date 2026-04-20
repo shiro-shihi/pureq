@@ -1,0 +1,24 @@
+{
+  "name": "@pureq/connectivity",
+  "version": "1.0.0",
+  "description": "True Universal Web-Stream-Based Connectivity for Pureq",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "connectivity",
+    "pureq",
+    "web-streams",
+    "universal",
+    "zero-dependency"
+  ],
+  "author": "shiro-shihi",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}

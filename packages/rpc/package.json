@@ -1,0 +1,33 @@
+{
+  "name": "@pureq/rpc",
+  "version": "1.1.0",
+  "description": "Industrial-Grade, True Zero-Dependency, Manifest-Driven RPC for Pureq",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run tests"
+  },
+  "keywords": [
+    "rpc",
+    "pureq",
+    "security",
+    "performance",
+    "zero-dependency",
+    "universal",
+    "edge"
+  ],
+  "author": "shiro-shihi",
+  "license": "MIT",
+  "dependencies": {
+    "@pureq/db": "workspace:*",
+    "@pureq/validation": "workspace:*",
+    "@pureq/connectivity": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  }
+}

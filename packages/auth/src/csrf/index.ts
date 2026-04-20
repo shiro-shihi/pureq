@@ -65,14 +65,19 @@ async function hmacTokenEquals(candidate: string, expected: string, hmacKey: Cry
   const a = new Uint8Array(candidateDigest);
   const b = new Uint8Array(expectedDigest);
 
-  if (a.length !== b.length) {
-    return false;
+  // SEC-H8: Continuous bitwise comparison to prevent any length-leakage.
+  // Note: HMAC-SHA256 digests are always 32 bytes, but we maintain rigor.
+  const lenA = a.length;
+  const lenB = b.length;
+  let diff = lenA ^ lenB;
+  const maxLen = Math.max(lenA, lenB);
+
+  for (let i = 0; i < maxLen; i++) {
+    const byteA = i < lenA ? a[i]! : 0;
+    const byteB = i < lenB ? b[i]! : 0;
+    diff |= byteA ^ byteB;
   }
 
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a[i]! ^ b[i]!;
-  }
   return diff === 0;
 }
 

@@ -9,6 +9,7 @@ import type {
   AuthTokens,
 } from "../shared/index.js";
 import { decodeJwt } from "../jwt/index.js";
+import { generateSecureId } from "@pureq/pureq";
 
 type SessionBroadcastMessage =
   | {
@@ -36,13 +37,13 @@ type SessionBroadcastPayload =
       readonly reason?: string;
     };
 
-function tokenExpiresAt(token: string | null): number | undefined {
+async function tokenExpiresAt(token: string | null): Promise<number | undefined> {
   if (!token) {
     return undefined;
   }
 
   try {
-    const claims = decodeJwt<{ readonly exp?: number }>(token);
+    const claims = await decodeJwt<{ readonly exp?: number }>(token);
     if (typeof claims.exp !== "number") {
       return undefined;
     }
@@ -55,7 +56,7 @@ function tokenExpiresAt(token: string | null): number | undefined {
 async function readState(storage: AuthStore): Promise<AuthSessionState> {
   const accessToken = await storage.get();
   const refreshToken = await storage.getRefresh();
-  const expiresAt = tokenExpiresAt(accessToken);
+  const expiresAt = await tokenExpiresAt(accessToken);
 
   return {
     accessToken,
@@ -143,13 +144,12 @@ export function createAuthSessionManager(
   const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(channelName) : null;
   const auditEvent = options.auditEvent;
   const exporter = options.exporter;
-  const instanceId = options.instanceId ?? `session-${Math.random().toString(16).slice(2)}`;
+  const instanceId = options.instanceId ?? `session-${generateSecureId(8)}`;
   const minRefreshIntervalMs = options.minRefreshIntervalMs ?? 10_000;
   const slidingWindowMs = options.slidingWindowMs;
   const idleTimeoutMs = options.idleTimeoutMs;
   // SEC-H7: broadcast secret for HMAC signing
-  const broadcastSecret = options.broadcastSecret ?? `pureq-bc-${instanceId}-${Math.random().toString(36).slice(2)}`;
-
+  const broadcastSecret = options.broadcastSecret ?? `pureq-bc-${instanceId}-${generateSecureId(16)}`;
   const assertActive = (): void => {
     if (disposed) {
       throw new Error("pureq: session manager has been disposed");

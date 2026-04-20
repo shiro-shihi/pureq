@@ -17,6 +17,7 @@ import {
   createAuthDebugLogger,
   createAuth,
 } from "../src/index";
+import { generateSecureId } from "@pureq/pureq";
 
 function createUnsignedJwt(expSeconds: number): string {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
@@ -41,7 +42,7 @@ describe("SEC-C1: JWT alg:none rejection", () => {
     const forgedToken = `${header}.${payload}.`;
 
     await expect(
-      verifyJwt(forgedToken, "any-secret", { algorithms: ["HS256"] })
+      verifyJwt(forgedToken, { secret: generateSecureId(32), algorithms: ["HS256"] })
     ).rejects.toThrow(/algorithm.*"none".*not permitted/i);
   });
 
@@ -57,7 +58,7 @@ describe("SEC-C1: JWT alg:none rejection", () => {
     const forgedToken = `${header}.${payload}.nosig`;
 
     await expect(
-      verifyJwt(forgedToken, "secret", { algorithms: ["none", "HS256"] })
+      verifyJwt(forgedToken, { secret: generateSecureId(32), algorithms: ["none", "HS256"] })
     ).rejects.toThrow(/algorithm.*"none".*not permitted/i);
   });
 
@@ -73,7 +74,7 @@ describe("SEC-C1: JWT alg:none rejection", () => {
     const forgedToken = `${header}.${payload}.nosig`;
 
     await expect(
-      verifyJwt(forgedToken, "secret", { algorithms: ["HS256"] })
+      verifyJwt(forgedToken, { secret: generateSecureId(32), algorithms: ["HS256"] })
     ).rejects.toThrow(/not permitted/i);
   });
 });
@@ -94,14 +95,14 @@ describe("SEC-C2: JWT algorithm restriction", () => {
     const forgedToken = `${header}.${payload}.fakesig`;
 
     await expect(
-      verifyJwt(forgedToken, "secret", { algorithms: ["HS256"] })
+      verifyJwt(forgedToken, { secret: generateSecureId(32), algorithms: ["HS256"] })
     ).rejects.toThrow(/unsupported JWT algorithm/i);
   });
 
   it("requires algorithms parameter (compile-time check via type)", () => {
     // This test validates the API contract: algorithms is required
     // @ts-expect-error - algorithms is required
-    expect(() => verifyJwt("a.b.c", "secret", {})).toBeDefined();
+    expect(() => verifyJwt("a.b.c", { secret: "secret" } as any)).toBeDefined();
   });
 });
 
@@ -422,7 +423,7 @@ describe("FEAT-H5: Auth lifecycle callbacks", () => {
 // ===========================================================================
 describe("FEAT-H7: Auth encryption", () => {
   it("encrypts and decrypts a payload round-trip", async () => {
-    const enc = createAuthEncryption("test-secret-at-least-32-chars-long!");
+    const enc = createAuthEncryption(generateSecureId(32));
     const payload = { sub: "user-1", roles: ["admin"] };
     const token = await enc.encrypt(payload);
     expect(typeof token).toBe("string");
@@ -433,8 +434,8 @@ describe("FEAT-H7: Auth encryption", () => {
   });
 
   it("fails to decrypt with wrong secret", async () => {
-    const enc1 = createAuthEncryption("secret-1-xxxxxxxxxxxxxxxxxxxxxxxxxx");
-    const enc2 = createAuthEncryption("secret-2-xxxxxxxxxxxxxxxxxxxxxxxxxx");
+    const enc1 = createAuthEncryption(generateSecureId(32));
+    const enc2 = createAuthEncryption(generateSecureId(32));
     const token = await enc1.encrypt({ data: "sensitive" });
     await expect(enc2.decrypt(token)).rejects.toThrow();
   });
@@ -446,7 +447,7 @@ describe("FEAT-H7: Auth encryption", () => {
 describe("FEAT-M6: Encrypted token storage", () => {
   it("encrypts tokens at rest and decrypts on read", async () => {
     const inner = authMemoryStore();
-    const encrypted = authEncryptedStore(inner, "passphrase-must-be-at-least-this-long!");
+    const encrypted = authEncryptedStore(inner, generateSecureId(32));
 
     await encrypted.set("my-access-token");
     await encrypted.setRefresh("my-refresh-token");

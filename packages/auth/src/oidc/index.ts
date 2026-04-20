@@ -111,15 +111,15 @@ function sweepReplayCache(cache: Map<string, number>, now: number): void {
 }
 
 /** Validate id_token claims (iss, aud, exp, nonce). */
-function validateIdTokenClaims(
+async function validateIdTokenClaims(
   idToken: string,
   expectedIssuer: string | undefined,
   expectedAudience: string,
   expectedNonce: string | undefined
-): void {
+): Promise<void> {
   let claims: { readonly iss?: string; readonly aud?: string | readonly string[]; readonly exp?: number; readonly nonce?: string };
   try {
-    claims = decodeJwt(idToken);
+    claims = await decodeJwt(idToken);
   } catch {
     throw createAuthError("PUREQ_OIDC_INVALID_ID_TOKEN", "pureq: failed to decode id_token");
   }
@@ -322,7 +322,7 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
 
       // SEC-H5: validate id_token if present
       if (tokenResponse.idToken) {
-        validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, undefined);
+        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, undefined);
       }
 
       return tokenResponse;
@@ -353,7 +353,7 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
       // SEC-H5 + SEC-H6: validate id_token nonce
       if (tokenResponse.idToken && requestOptions.expectedNonce) {
         const metadata = await getMetadata();
-        validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, requestOptions.expectedNonce);
+        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, requestOptions.expectedNonce);
       }
 
       return tokenResponse;

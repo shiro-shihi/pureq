@@ -1,3 +1,4 @@
+import { generateSecureId } from "@pureq/pureq";
 import type {
   AuthAccount,
   AuthDatabaseAdapter,
@@ -82,10 +83,10 @@ function now(): Date {
 }
 
 function createId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+  if (typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
   }
-  return `user_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+  return `u_${generateSecureId(16)}`;
 }
 
 function rowToUser(row: SqlRow): AuthUser {

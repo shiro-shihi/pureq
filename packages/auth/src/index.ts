@@ -174,7 +174,7 @@ export type {
 	ProviderNormalizedError,
 } from "./providers/index.js";
 export { composeAuthCallbacks } from "./callbacks/index.js";
-export { createAuthEncryption } from "./encryption/index.js";
+export { createAuthEncryption, encrypt, decrypt } from "./encryption/index.js";
 export { createAuthorization } from "./authorization/index.js";
 export { createAuthDebugLogger } from "./debug/index.js";
 export { createAuth } from "./core/index.js";
