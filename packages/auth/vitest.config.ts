@@ -8,6 +8,7 @@ export default defineConfig({
       "@pureq/pureq/*": resolve(__dirname, "../pureq/src/*"),
       "@pureq/db": resolve(__dirname, "../db/src/index.ts"),
       "@pureq/validation": resolve(__dirname, "../validation/src/index.ts"),
+      "@pureq/connectivity": resolve(__dirname, "../connectivity/src/index.ts"),
     },
   },
   test: {
