@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "pnpm run test:unit",
-    "test:unit": "vitest run tests"
+    "test:unit": "vitest run tests",
+    "test:ci": "pnpm run test:unit && tsc --build tsconfig.json"
   },
   "dependencies": {
     "@pureq/validation": "workspace:*",
