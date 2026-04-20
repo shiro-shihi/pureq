@@ -28,5 +28,10 @@
   "dependencies": {},
   "devDependencies": {
     "typescript": "^6.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiro-shihi/pureq.git",
+    "directory": "packages/connectivity"
   }
 }

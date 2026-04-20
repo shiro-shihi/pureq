@@ -30,5 +30,10 @@
   "devDependencies": {
     "typescript": "^6.0.2",
     "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiro-shihi/pureq.git",
+    "directory": "packages/rpc"
   }
 }
