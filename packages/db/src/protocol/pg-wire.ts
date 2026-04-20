@@ -148,7 +148,7 @@ export class PgProtocol {
     return buffer;
   }
 
-  encodeSASLInitialResponse(mechanism: string, clientFirstMessage: string): Uint8Array {
+  encodeSaslInitialResponse(mechanism: string, clientFirstMessage: string): Uint8Array {
     const mechBytes = this.encoder.encode(mechanism);
     const msgBytes = this.encoder.encode(clientFirstMessage);
     const size = 4 + mechBytes.length + 1 + 4 + msgBytes.length;
@@ -163,7 +163,7 @@ export class PgProtocol {
     return buffer;
   }
 
-  encodeSASLResponse(clientFinalMessage: string): Uint8Array {
+  encodePasswordMessage(clientFinalMessage: string): Uint8Array {
     const msgBytes = this.encoder.encode(clientFinalMessage);
     const size = 4 + msgBytes.length;
     const buffer = new Uint8Array(size + 1);

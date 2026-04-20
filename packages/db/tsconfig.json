@@ -1,14 +1,26 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ESNext", "DOM"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "composite": true,
-    "rootDir": "src",
-    "outDir": "dist",
-    "types": ["node"]
+    "paths": {
+      "@pureq/connectivity": ["../connectivity/src/index.ts"],
+      "@pureq/validation": ["../validation/src/index.ts"]
+    }
   },
-  "include": ["src"],
-  "exclude": ["dist", "tests"],
   "references": [
+    { "path": "../connectivity" },
     { "path": "../validation" }
-  ]
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

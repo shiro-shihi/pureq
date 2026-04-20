@@ -710,6 +710,7 @@ export interface AuthConfig {
 	readonly bridge?: AuthBridgeCookieOptions;
 	readonly debug?: boolean;
 	readonly allowDangerousAccountLinking?: boolean;
+	readonly allowedCallbackDomains?: string[];
 }
 
 export interface AuthInstance {

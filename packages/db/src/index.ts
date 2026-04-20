@@ -23,3 +23,5 @@ export * from "./types/diagnostics.js";
 export * from "./cli/index.js";
 export { PostgresCompiler } from "./builder/postgres-compiler.js";
 export { withRetry, type RetryOptions } from "./utils/retry.js";
+export { PgOids, PgProtocol } from "./protocol/pg-wire.js";
+export { MysqlProtocol } from "./protocol/mysql-wire.js";

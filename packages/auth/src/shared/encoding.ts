@@ -2,6 +2,11 @@ export function base64Encode(input: string): string {
   if (typeof btoa === "function") {
     return btoa(input);
   }
+  // @ts-ignore - Handle Node.js Buffer if available
+  if (typeof Buffer !== "undefined") {
+    // @ts-ignore
+    return Buffer.from(input, "binary").toString("base64");
+  }
 
   throw new Error("pureq: base64 encoding is not supported in this environment");
 }
@@ -9,6 +14,11 @@ export function base64Encode(input: string): string {
 export function base64Decode(input: string): string {
   if (typeof atob === "function") {
     return atob(input);
+  }
+  // @ts-ignore - Handle Node.js Buffer if available
+  if (typeof Buffer !== "undefined") {
+    // @ts-ignore
+    return Buffer.from(input, "base64").toString("binary");
   }
 
   throw new Error("pureq: base64 decoding is not supported in this environment");

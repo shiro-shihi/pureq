@@ -38,12 +38,29 @@ const guard = withRevocationGuard({
 
 ## Operational Guidance
 
+- **Production Storage:** Use `authCookieStore` (HttpOnly and Secure) as the primary storage mechanism in production to mitigate XSS risks.
+- **XSS Awareness:** Avoid `authLocalStorage` and `authSessionStorage` for sensitive tokens in production unless the application environment specifically requires it and XSS risks are fully mitigated. These stores are accessible to JavaScript and can be easily compromised if an XSS vulnerability exists.
 - Prefer short-lived access tokens and use revocation for incident response and logout propagation.
 - Use revocation by `sid` for session invalidation and by `jti` for individual token invalidation.
 - Pair CSRF protection with cookie-based auth flows or any state-changing route that accepts browser-sent credentials.
 - Manage encryption keys with high entropy (>= 256-bit), using environment variables or secret managers.
 - Rotate encryption keys on a regular schedule; current encrypted payload compatibility is single-key.
 - `createAuthEncryption` defaults to PBKDF2 `100_000` iterations. For password-derived secrets, consider `600_000+`.
+
+## Hardening for High-Security Environments
+
+For applications requiring maximum protection (e.g., financial services):
+
+1.  **Strict Cookie Policy:** Override the default `Lax` behavior by setting `sameSite: "strict"` in your cookie store configuration. This prevents cookies from being sent in cross-site subrequests and top-level navigations.
+2.  **Explicit CSRF Everywhere:** Ensure `withCsrfProtection` is applied to *every* state-changing route (POST, PUT, DELETE, PATCH). While our presets provide secure defaults, explicit middleware application ensures no route is left unprotected by omission.
+3.  **Encrypted-At-Rest Tokens:** Always wrap your primary store in `authEncryptedStore` to protect sensitive tokens even if the underlying storage (like a database or browser cache) is compromised.
+
+## Application-Level Redirection Safety
+
+While `@pureq/auth` prevents Open Redirects within its internal flows, application-level logic often introduces vulnerabilities through "return to" parameters.
+
+- **Whitelist Validation:** Never trust a `?returnTo=` or similar URL parameter from the user. Always validate it against a whitelist of allowed domains or ensure it is a relative path starting with a single `/`.
+- **BFF/Frontend Verification:** If using a BFF (Backend-for-Frontend) or a SPA frontend, perform the redirect validation before passing the URL to login or logout functions.
 
 ## Credentials Provider Password Handling
 

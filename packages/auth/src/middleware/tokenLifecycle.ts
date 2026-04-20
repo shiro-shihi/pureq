@@ -23,7 +23,7 @@ export function withTokenLifecycle(options: TokenLifecycleOptions): Middleware {
       let claims: { readonly exp?: number };
 
       try {
-        claims = decodeJwt<{ readonly exp?: number }>(token);
+        claims = await decodeJwt<{ readonly exp?: number }>(token);
       } catch (error) {
         throw buildAuthError("PUREQ_AUTH_INVALID_TOKEN", "pureq: failed to inspect token lifecycle", error);
       }

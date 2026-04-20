@@ -2,7 +2,25 @@
 
 All notable changes to `@pureq/auth` are documented in this file.
 
-## [Unreleased]
+## [0.5.0] - 2026-04-20
+
+### Added (Fortress Hardening Suite)
+
+- **JWT Verification Core Hardening:**
+  - Mandatory algorithm whitelisting to prevent Algorithm Confusion attacks.
+  - Strict claim validation for `exp` (expiry), `nbf` (not before), `iss` (issuer), and `aud` (audience).
+  - Universal Base64 support for consistent behavior across Node.js, Browsers, and Edge runtimes.
+- **Open Redirect Protection:**
+  - Integrated `AuthCore.validateCallbackUrl` into route handlers.
+  - Enforced strict hostname whitelisting for `callbackUrl` and other redirection parameters.
+- **CSRF Defense Hardening:**
+  - Implemented 100% constant-time HMAC comparison (no early returns) to prevent length-leakage timing attacks.
+  - Corrected `generateSecureId` numeric byte length usage in CSRF token generation.
+- **Client-Side Storage Security:**
+  - Added explicit XSS vulnerability warnings to `authLocalStorage` and `authSessionStorage`.
+  - Documentation updated to strongly recommend `authCookieStore` (HttpOnly/Secure) for production.
+- **Side-Channel Mitigation:**
+  - Standardized on cryptographically secure random session IDs, eliminating `Math.random()`.
 
 ### Added (Unreleased)
 

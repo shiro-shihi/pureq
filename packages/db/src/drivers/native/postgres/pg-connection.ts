@@ -1,435 +1,132 @@
 import { PgProtocol, type FieldDescription, type PgMessage, type PgNotification } from "../../../protocol/pg-wire.js";
-import { ScramSha256 } from "./scram.js";
-import { BufferReader, type PureqSocket } from "../common/socket.js";
-import { createLazyRowProxy } from "./lazy-row.js";
+import { PureqConnection } from "@pureq/connectivity";
 import { DBError, type DBErrorCode } from "../../../errors/db-error.js";
+import { ScramSha256 } from "./scram.js";
 
 export interface PgConnectionConfig {
   user: string;
-  database: string;
   password?: string;
-  ssl?: boolean | "require" | "prefer";
+  database: string;
 }
 
-export type PgNotificationListener = (notification: PgNotification) => void;
+export type PgNotificationListener = (n: PgNotification) => void;
 
 export class PgConnection {
   private protocol = new PgProtocol();
-  private reader = new BufferReader();
   private isConnected = false;
+  private parameters: Record<string, string> = {};
+  private backendKeyData?: { processId: number, secretKey: number };
   private notificationListeners: Set<PgNotificationListener> = new Set();
-  
-  public backendKeyData?: { processId: number, secretKey: number } | undefined;
-  public parameters: Record<string, string> = {};
+  private preparedStatements = new Map<string, { name: string, fields: FieldDescription[] }>();
+  private stmtCounter = 0;
 
-  constructor(
-    private readonly socket: PureqSocket,
-    private readonly config: PgConnectionConfig
-  ) {}
+  constructor(private connection: PureqConnection, private config: PgConnectionConfig) {}
+
+  async connect(): Promise<void> {
+    if (this.isConnected) return;
+    await this.connection.writer.write(this.protocol.encodeStartupMessage(this.config.user, this.config.database));
+    while (true) {
+      const msg = await this.readMessage();
+      switch (msg.type) {
+        case "R": await this.handleAuth(msg.data); break;
+        case "S": this.handleParameterStatus(msg.data); break;
+        case "K": this.handleBackendKeyData(msg.data); break;
+        case "Z": this.isConnected = true; return;
+        case "E": throw new DBError("CONNECTION_FAILURE", this.protocol.parseErrorResponse(msg.data).message);
+      }
+    }
+  }
+
+  private async handleAuth(data: Uint8Array) {
+    const type = new DataView(data.buffer, data.byteOffset).getInt32(0);
+    if (type === 0) return;
+    if (type === 10) return this.handleSaslAuth(data);
+    throw new Error(`Unsupported Auth: ${type}`);
+  }
+
+  private async handleSaslAuth(data: Uint8Array) {
+    if (!this.config.password) throw new Error("Missing password for SASL");
+    const scram = new ScramSha256(this.config.user, this.config.password);
+    await this.connection.writer.write(this.protocol.encodeSaslInitialResponse("SCRAM-SHA-256", scram.clientFirstMessage()));
+    const serverFirst = await this.readMessage();
+    const serverFinal = await scram.clientFinalMessage(new TextDecoder().decode(serverFirst.data.subarray(4)));
+    await this.connection.writer.write(this.protocol.encodePasswordMessage(serverFinal));
+    const final = await this.readMessage();
+    // Server Signature Verification (Restored)
+    if (!(await scram.verifyServerSignature(new TextDecoder().decode(final.data.subarray(4))))) {
+        throw new Error("MITM Detected: Server signature mismatch");
+    }
+  }
+
+  private async readMessage(): Promise<PgMessage> {
+    const typeBuf = await this.connection.reader.read(1);
+    const lengthBuf = await this.connection.reader.read(4);
+    const length = (lengthBuf[0]! << 24) | (lengthBuf[1]! << 16) | (lengthBuf[2]! << 8) | lengthBuf[3]!;
+    const data = await this.connection.reader.read(length - 4);
+    return { type: String.fromCharCode(typeBuf[0]!), data };
+  }
+
+  async executeExtendedQuery<T>(sql: string, params: any[]): Promise<{ rows: T[], affectedRows: number }> {
+    if (!this.isConnected) await this.connect();
+    const stmtName = `ps_${this.stmtCounter++}`;
+    
+    // Parse, Bind, Describe, Execute, Sync
+    await this.connection.writer.write(this.protocol.encodeParse(stmtName, sql));
+    await this.connection.writer.write(this.protocol.encodeBind("", stmtName, params, [1]));
+    await this.connection.writer.write(this.protocol.encodeDescribe("P", ""));
+    await this.connection.writer.write(this.protocol.encodeExecute("", 0));
+    await this.connection.writer.write(this.protocol.encodeSync());
+
+    const rows: T[] = [];
+    let fields: FieldDescription[] = [];
+    let affectedRows = 0;
+
+    while (true) {
+      const msg = await this.readMessage();
+      if (msg.type === "T") fields = this.protocol.parseRowDescription(msg.data);
+      if (msg.type === "D") rows.push(this.protocol.parseDataRow(msg.data, fields) as T);
+      if (msg.type === "C") {
+          const tag = new TextDecoder().decode(msg.data);
+          const num = parseInt(tag.split(" ").pop() || "0");
+          if (!isNaN(num)) affectedRows = num;
+      }
+      if (msg.type === "Z") break;
+      if (msg.type === "E") throw new DBError("SYNTAX_ERROR", this.protocol.parseErrorResponse(msg.data).message);
+    }
+    return { rows, affectedRows };
+  }
+
+  async *streamQuery<T>(sql: string, params: any[]): AsyncIterableIterator<T> {
+    if (!this.isConnected) await this.connect();
+    const stmtName = `ps_stream_${this.stmtCounter++}`;
+    
+    await this.connection.writer.write(this.protocol.encodeParse(stmtName, sql));
+    await this.connection.writer.write(this.protocol.encodeBind("", stmtName, params, [1]));
+    await this.connection.writer.write(this.protocol.encodeDescribe("P", ""));
+    await this.connection.writer.write(this.protocol.encodeExecute("", 0));
+    await this.connection.writer.write(this.protocol.encodeSync());
+
+    let fields: FieldDescription[] = [];
+
+    while (true) {
+      const msg = await this.readMessage();
+      if (msg.type === "T") fields = this.protocol.parseRowDescription(msg.data);
+      if (msg.type === "D") yield this.protocol.parseDataRow(msg.data, fields) as T;
+      if (msg.type === "Z") break;
+      if (msg.type === "E") throw new DBError("SYNTAX_ERROR", this.protocol.parseErrorResponse(msg.data).message);
+    }
+  }
 
   onNotification(listener: PgNotificationListener): () => void {
     this.notificationListeners.add(listener);
     return () => this.notificationListeners.delete(listener);
   }
 
-  async connect(): Promise<void> {
-    if (this.isConnected) return;
-
-    if (this.config.ssl) {
-      await this.socket.write(this.protocol.encodeSSLRequest());
-      const response = await this.readBytes(1);
-      const answer = String.fromCharCode(response[0]!);
-      
-      if (answer === 'S') {
-        if (this.socket.upgradeTls) {
-          await this.socket.upgradeTls({ host: "localhost" });
-        } else {
-          throw new Error("Socket implementation does not support TLS upgrade");
-        }
-      } else if (this.config.ssl === "require") {
-        throw new Error("Server does not support SSL, but ssl=require was specified");
-      }
-    }
-
-    await this.socket.write(this.protocol.encodeStartupMessage(this.config.user, this.config.database));
-
-    while (true) {
-      const message = await this.readMessage();
-      
-      switch (message.type) {
-        case "R": // AuthenticationRequest
-          await this.handleAuthentication(message.data);
-          break;
-        case "S": // ParameterStatus
-          this.handleParameterStatus(message.data);
-          break;
-        case "K": // BackendKeyData
-          this.handleBackendKeyData(message.data);
-          break;
-        case "A": // NotificationResponse
-          this.handleNotification(message.data);
-          break;
-        case "Z": // ReadyForQuery
-          this.isConnected = true;
-          return;
-        case "E": // ErrorResponse
-          const err = this.protocol.parseErrorResponse(message.data);
-          throw new DBError("CONNECTION_FAILURE", `Authentication failed: ${err.message ?? "Unknown error"}`, err);
-      }
-    }
-  }
-
-  private async handleAuthentication(data: Uint8Array): Promise<void> {
-    const view = new DataView(data.buffer, data.byteOffset);
-    const authType = view.getInt32(0);
-
-    if (authType === 0) {
-      return;
-    } else if (authType === 3) {
-      if (!this.config.password) throw new Error("Database requires password but none provided");
-      await this.socket.write(this.protocol.encodePassword(this.config.password));
-    } else if (authType === 10) {
-      if (!this.config.password) throw new Error("Database requires SCRAM password but none provided");
-      
-      const scram = new ScramSha256(this.config.user, this.config.password);
-      const clientFirst = scram.createClientFirstMessage();
-      await this.socket.write(this.protocol.encodeSASLInitialResponse("SCRAM-SHA-256", clientFirst));
-      
-      const nextMsg = await this.readMessage();
-      if (nextMsg.type === 'E') {
-         const err = this.protocol.parseErrorResponse(nextMsg.data);
-         throw new Error(`SASL Auth failed: ${err.message}`);
-      }
-      const serverFirst = new TextDecoder().decode(nextMsg.data.slice(4));
-      const clientFinal = await scram.parseServerFirstMessage(serverFirst);
-      await this.socket.write(this.protocol.encodeSASLResponse(clientFinal));
-
-      const finalMsg = await this.readMessage();
-      const serverFinal = new TextDecoder().decode(finalMsg.data.slice(4));
-      await scram.verifyServerFinalMessage(serverFinal);
-      
-      const okMsg = await this.readMessage();
-      if (okMsg.type !== 'R' || new DataView(okMsg.data.buffer, okMsg.data.byteOffset).getInt32(0) !== 0) {
-         throw new Error("Expected Auth OK");
-      }
-    } else {
-      throw new Error(`Unsupported authentication type: ${authType}`);
-    }
-  }
-
-  private handleParameterStatus(data: Uint8Array) {
-    let offset = 0;
-    const nullIdx1 = data.indexOf(0, offset);
-    if (nullIdx1 === -1) return;
-    const name = new TextDecoder().decode(data.slice(offset, nullIdx1));
-    offset = nullIdx1 + 1;
-    
-    const nullIdx2 = data.indexOf(0, offset);
-    if (nullIdx2 === -1) return;
-    const value = new TextDecoder().decode(data.slice(offset, nullIdx2));
-    this.parameters[name] = value;
-  }
-
-  private handleBackendKeyData(data: Uint8Array) {
-    if (data.length < 8) return;
-    const view = new DataView(data.buffer, data.byteOffset, data.length);
-    this.backendKeyData = {
-      processId: view.getInt32(0),
-      secretKey: view.getInt32(4)
-    };
-  }
-
-  private handleNotification(data: Uint8Array) {
-    try {
-      const notification = this.protocol.parseNotification(data);
-      for (const listener of this.notificationListeners) {
-        try {
-          listener(notification);
-        } catch (e) {
-          console.error("Error in PG notification listener:", e);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to parse notification:", e);
-    }
-  }
-
-  private preparedStatements = new Map<string, { name: string, fields: FieldDescription[] }>();
-  private stmtCounter = 0;
-  private static readonly MAX_PREPARED_STATEMENTS = 1000;
-
-  private async prepareAndDescribe(sql: string): Promise<{ name: string, fields: FieldDescription[] }> {
-    const cached = this.preparedStatements.get(sql);
-    if (cached) return cached;
-
-    const stmtName = `ps_${this.stmtCounter++}`;
-    const messages = [
-      this.protocol.encodeParse(stmtName, sql),
-      this.protocol.encodeDescribe("S", stmtName),
-      this.protocol.encodeSync()
-    ];
-
-    await this.socket.write(this.concatMessages(messages));
-
-    let fields: FieldDescription[] = [];
-    while (true) {
-      const msg = await this.readMessage();
-      if (msg.type === "T") {
-        fields = this.protocol.parseRowDescription(msg.data);
-      } else if (msg.type === "E") {
-        const err = this.protocol.parseErrorResponse(msg.data);
-        await this.drainUntilReadyForQuery();
-        throw new DBError("SYNTAX_ERROR", `Prepare failed: ${err.message}`, err);
-      } else if (msg.type === "Z") {
-        break;
-      }
-    }
-
-    const result = { name: stmtName, fields };
-    
-    // LRU-style eviction for simple Map: delete the first (oldest) entry
-    if (this.preparedStatements.size >= PgConnection.MAX_PREPARED_STATEMENTS) {
-        const oldestKey = this.preparedStatements.keys().next().value;
-        if (oldestKey !== undefined) {
-            this.preparedStatements.delete(oldestKey);
-        }
-    }
-    
-    this.preparedStatements.set(sql, result);
-    return result;
-  }
-
-  private concatMessages(messages: Uint8Array[]): Uint8Array {
-    const totalLength = messages.reduce((sum, msg) => sum + msg.length, 0);
-    const payload = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const msg of messages) {
-      payload.set(msg, offset);
-      offset += msg.length;
-    }
-    return payload;
-  }
-
-  async executeExtendedQuery<T>(sql: string, params: any[]): Promise<{ rows: T[], affectedRows: number }> {
-    if (!this.isConnected) await this.connect();
-
-    const { name: statementName, fields } = await this.prepareAndDescribe(sql);
-    const portalName = "";
-
-    const messages = [
-      this.protocol.encodeBind(portalName, statementName, params, [1]),
-      this.protocol.encodeExecute(portalName, 0),
-      this.protocol.encodeSync()
-    ];
-
-    await this.socket.write(this.concatMessages(messages));
-
-    const rows: T[] = [];
-    let affectedRows = 0;
-
-    while (true) {
-      // Microtask Batching: Process all available messages in the buffer before awaiting more data
-      while (this.reader.length >= 5) {
-        const header = this.reader.peek(5)!;
-        const type = String.fromCharCode(header[0]!);
-        const length = new DataView(header.buffer, header.byteOffset + 1).getInt32(0);
-        
-        if (this.reader.length < length + 1) break; // Incomplete message, wait for more data
-
-        const messageData = this.reader.consume(length + 1).subarray(5);
-        
-        switch (type) {
-          case "D": {
-            if (fields.length <= 10) {
-              rows.push(this.protocol.parseDataRow(messageData, fields) as unknown as T);
-            } else {
-              rows.push(createLazyRowProxy<T>(messageData, fields, this.protocol));
-            }
-            break;
-          }
-          case "C": {
-            const tag = new TextDecoder().decode(messageData).replace(/\0$/, "");
-            const parts = tag.split(" ");
-            if (parts.length > 1) {
-               const lastNum = parseInt(parts[parts.length - 1] ?? "0", 10);
-               if (!isNaN(lastNum)) affectedRows = lastNum;
-            }
-            break;
-          }
-          case "A":
-            this.handleNotification(messageData);
-            break;
-          case "E": {
-            const errDetails = this.protocol.parseErrorResponse(messageData);
-            await this.drainUntilReadyForQuery();
-            throw new DBError(this.mapSqlStateToCode(errDetails.code ?? ""), errDetails.message ?? "Database error", errDetails);
-          }
-          case "Z":
-            return { rows, affectedRows };
-        }
-      }
-
-      // Buffer empty or incomplete message: await next socket chunk
-      const iterator = this.socket.read();
-      const { value, done } = await iterator.next();
-      if (done || !value) throw new Error("Socket closed unexpectedly during query execution");
-      this.reader.append(value);
-    }
-  }
-
-  async executeBatch(queries: { sql: string; params: any[] }[]): Promise<{ rows: any[], affectedRows: number }[]> {
-    if (!this.isConnected) await this.connect();
-    if (queries.length === 0) return [];
-
-    const results: { rows: any[], affectedRows: number }[] = [];
-    const messages: Uint8Array[] = [];
-    const queriesMeta: { name: string, fields: FieldDescription[] }[] = [];
-
-    for (const q of queries) {
-      const meta = await this.prepareAndDescribe(q.sql);
-      queriesMeta.push(meta);
-    }
-
-    for (let i = 0; i < queries.length; i++) {
-      const q = queries[i]!;
-      const meta = queriesMeta[i]!;
-      const portalName = `p_${i}`;
-      messages.push(this.protocol.encodeBind(portalName, meta.name, q.params, [1]));
-      messages.push(this.protocol.encodeExecute(portalName, 0));
-    }
-    messages.push(this.protocol.encodeSync());
-
-    await this.socket.write(this.concatMessages(messages));
-
-    let currentQueryIndex = 0;
-    let currentRows: any[] = [];
-    let currentAffectedRows = 0;
-
-    while (true) {
-      const message = await this.readMessage();
-      
-      switch (message.type) {
-        case "D": {
-          const fields = queriesMeta[currentQueryIndex]!.fields;
-          if (fields.length <= 10) {
-            currentRows.push(this.protocol.parseDataRow(message.data, fields));
-          } else {
-            currentRows.push(createLazyRowProxy<any>(message.data, fields, this.protocol));
-          }
-          break;
-        }
-        case "C": {
-          const tag = new TextDecoder().decode(message.data).replace(/\0$/, "");
-          const parts = tag.split(" ");
-          if (parts.length > 1) {
-             const lastNum = parseInt(parts[parts.length - 1] ?? "0", 10);
-             if (!isNaN(lastNum)) currentAffectedRows = lastNum;
-          }
-          results.push({ rows: currentRows, affectedRows: currentAffectedRows });
-          currentQueryIndex++;
-          currentRows = [];
-          currentAffectedRows = 0;
-          break;
-        }
-        case "A":
-          this.handleNotification(message.data);
-          break;
-        case "E": {
-          const errDetails = this.protocol.parseErrorResponse(message.data);
-          await this.drainUntilReadyForQuery();
-          throw new DBError(this.mapSqlStateToCode(errDetails.code ?? ""), `Batch execution failed at query ${currentQueryIndex}: ${errDetails.message}`, errDetails);
-        }
-        case "Z":
-          return results;
-      }
-    }
-  }
-
-  async *streamQuery<T>(sql: string, params: any[]): AsyncIterableIterator<T> {
-    if (!this.isConnected) await this.connect();
-
-    const { name: statementName, fields } = await this.prepareAndDescribe(sql);
-    const portalName = "stream_portal";
-
-    const messages = [
-      this.protocol.encodeBind(portalName, statementName, params, [1]),
-      this.protocol.encodeExecute(portalName, 0),
-      this.protocol.encodeSync()
-    ];
-
-    await this.socket.write(this.concatMessages(messages));
-
-    while (true) {
-      const message = await this.readMessage();
-      
-      switch (message.type) {
-        case "D":
-          if (fields.length <= 10) {
-            yield this.protocol.parseDataRow(message.data, fields) as unknown as T;
-          } else {
-            yield createLazyRowProxy<T>(message.data, fields, this.protocol);
-          }
-          break;
-        case "C":
-        case "A":
-          if (message.type === "A") this.handleNotification(message.data);
-          break;
-        case "E": {
-          const errDetails = this.protocol.parseErrorResponse(message.data);
-          await this.drainUntilReadyForQuery();
-          throw new DBError(this.mapSqlStateToCode(errDetails.code ?? ""), errDetails.message ?? "Database error", errDetails);
-        }
-        case "Z":
-          return;
-      }
-    }
-  }
-
-  private mapSqlStateToCode(sqlState: string): DBErrorCode {
-    if (sqlState.startsWith("23505")) return "UNIQUE_VIOLATION";
-    if (sqlState.startsWith("23502")) return "NOT_NULL_VIOLATION";
-    if (sqlState.startsWith("23503")) return "FOREIGN_KEY_VIOLATION";
-    if (sqlState.startsWith("42")) return "SYNTAX_ERROR";
-    if (sqlState.startsWith("08")) return "CONNECTION_FAILURE";
-    return "UNKNOWN_ERROR";
-  }
-
-  private async drainUntilReadyForQuery(): Promise<void> {
-    while (true) {
-      const message = await this.readMessage();
-      if (message.type === 'Z') break;
-    }
-  }
-
-  private async readBytes(length: number): Promise<Uint8Array> {
-    while (this.reader.length < length) {
-      const iterator = this.socket.read();
-      const { value, done } = await iterator.next();
-      if (done || !value) throw new Error("Socket closed unexpectedly");
-      this.reader.append(value);
-    }
-    return this.reader.consume(length);
-  }
-
-  private static readonly MAX_MESSAGE_SIZE = 16 * 1024 * 1024; // 16MB
-
-  private async readMessage(): Promise<PgMessage> {
-    const typeBuf = await this.readBytes(1);
-    const type = String.fromCharCode(typeBuf[0]!);
-    const lengthBuf = await this.readBytes(4);
-    const length = new DataView(lengthBuf.buffer, lengthBuf.byteOffset).getInt32(0);
-    
-    if (length < 4 || length > PgConnection.MAX_MESSAGE_SIZE) {
-        throw new Error(`Invalid message length: ${length}. Range allowed: 4 to ${PgConnection.MAX_MESSAGE_SIZE}`);
-    }
-    
-    const data = await this.readBytes(length - 4);
-    return { type, data };
-  }
+  private handleParameterStatus(data: Uint8Array) {}
+  private handleBackendKeyData(data: Uint8Array) {}
 
   async close(): Promise<void> {
-    await this.socket.write(new Uint8Array(['X'.charCodeAt(0), 0, 0, 0, 4]));
-    await this.socket.close();
-    this.isConnected = false;
+    await this.connection.writer.write(new Uint8Array(['X'.charCodeAt(0), 0, 0, 0, 4]));
+    await this.connection.writer.close();
   }
 }

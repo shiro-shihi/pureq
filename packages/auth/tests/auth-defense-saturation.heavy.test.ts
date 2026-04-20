@@ -7,10 +7,11 @@ import { parseOIDCCallbackParams } from "../src/oidc";
 import { createAuthCsrfProtection } from "../src/csrf";
 import { createAuthRevocationRegistry, withRevocationGuard } from "../src/revocation";
 
-function makeUnsignedToken(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+function makeMockJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.`;
+  const signature = Buffer.from("signature").toString("base64url");
+  return `${header}.${body}.${signature}`;
 }
 
 describe("defense/heavy: saturation attack matrix", () => {
@@ -53,7 +54,7 @@ describe("defense/heavy: saturation attack matrix", () => {
     expect(callbackError + missingCode + stateMismatch).toBe(400);
   });
 
-  it("resists malformed JWT decode floods without accepting garbage", () => {
+  it("resists malformed JWT decode floods without accepting garbage", async () => {
     const invalidTokens = Array.from({ length: 1000 }, (_, i) => {
       if (i % 5 === 0) {
         return "not-a-jwt";
@@ -65,7 +66,7 @@ describe("defense/heavy: saturation attack matrix", () => {
         return "a..c";
       }
       if (i % 5 === 3) {
-        return makeUnsignedToken({ exp: "oops", n: i }).replace(/\./g, "_");
+        return makeMockJwt({ exp: "oops", n: i }).replace(/\./g, "_");
       }
       return `${"x".repeat(5)}.${"$".repeat(5)}.${"y".repeat(5)}`;
     });
@@ -75,7 +76,7 @@ describe("defense/heavy: saturation attack matrix", () => {
 
     for (const token of invalidTokens) {
       try {
-        decodeJwt(token);
+        await decodeJwt(token);
         accepted += 1;
       } catch {
         rejected += 1;

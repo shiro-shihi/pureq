@@ -4,10 +4,11 @@ import { authRefresh } from "../src/middleware";
 import { createAuthSessionManager } from "../src/session";
 import { authMemoryStore } from "../src/storage";
 
-function createUnsignedJwt(expSeconds: number): string {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+function createMockJwt(expSeconds: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ exp: expSeconds })).toString("base64url");
-  return `${header}.${payload}.`;
+  const signature = Buffer.from("signature").toString("base64url");
+  return `${header}.${payload}.${signature}`;
 }
 
 describe("assault/heavy: concurrent refresh storms", () => {
@@ -18,8 +19,8 @@ describe("assault/heavy: concurrent refresh storms", () => {
       instanceId: "session-storm",
     });
 
-    const expired = createUnsignedJwt(Math.floor(Date.now() / 1000) - 60);
-    const fresh = createUnsignedJwt(Math.floor(Date.now() / 1000) + 3600);
+    const expired = createMockJwt(Math.floor(Date.now() / 1000) - 60);
+    const fresh = createMockJwt(Math.floor(Date.now() / 1000) + 3600);
     await session.setTokens({ accessToken: expired, refreshToken: "refresh-assault" });
 
     const refresh = vi.fn(async () => {

@@ -93,11 +93,11 @@ export class ScramSha256 {
     this.clientFirstMessageBare = `n=${this.user},r=${this.clientNonce}`;
   }
 
-  createClientFirstMessage(): string {
+  clientFirstMessage(): string {
     return `n,,${this.clientFirstMessageBare}`;
   }
 
-  async parseServerFirstMessage(message: string): Promise<string> {
+  async clientFinalMessage(message: string): Promise<string> {
     this.serverFirstMessage = message;
     const parts = message.split(',');
     for (const part of parts) {
@@ -126,7 +126,7 @@ export class ScramSha256 {
     return `${clientFinalMessageWithoutProof},p=${encodeBase64(clientProof.buffer as ArrayBuffer)}`;
   }
 
-  async verifyServerFinalMessage(message: string): Promise<void> {
+  async verifyServerSignature(message: string): Promise<boolean> {
     const parts = message.split(',');
     let serverSignatureBase64 = "";
     for (const part of parts) {
@@ -138,8 +138,6 @@ export class ScramSha256 {
     const serverKey = await hi(await importHmacKey(this.saltedPassword), encoder.encode("Server Key"));
     const expectedServerSignature = await hi(await importHmacKey(serverKey), encoder.encode(this.authMessage));
     
-    if (encodeBase64(expectedServerSignature.buffer as ArrayBuffer) !== serverSignatureBase64) {
-      throw new Error("Security Exception: SCRAM Server signature verification failed");
-    }
+    return encodeBase64(expectedServerSignature.buffer as ArrayBuffer) === serverSignatureBase64;
   }
 }

@@ -1,61 +1,20 @@
 {
   "name": "@pureq/db",
-  "version": "1.2.0",
-  "description": "Native-first, validation-integrated DB driver and query builder for Pureq",
+  "version": "1.3.0",
+  "description": "True Universal, Dependency-Free Database Engine for Pureq",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "pureq-db": "./dist/bin/pureq-db.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --build tsconfig.json",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest",
-    "test:unit": "vitest run tests/unit --passWithNoTests",
-    "test:integration": "vitest run tests/integration --passWithNoTests",
-    "test:security": "vitest run tests/security --passWithNoTests",
-    "test:ci": "pnpm run test:unit && pnpm run test:integration && pnpm run test:security && pnpm run typecheck",
-    "bench": "tsx"
-  },
-  "keywords": [
-    "database",
-    "sql",
-    "query-builder",
-    "pureq",
-    "validation",
-    "type-safe"
-  ],
-  "author": "shiro-shihi",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/shiro-shihi/pureq.git",
-    "directory": "packages/db"
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run tests"
   },
   "dependencies": {
     "@pureq/validation": "workspace:*",
-    "glob": "^11.0.1"
+    "@pureq/connectivity": "workspace:*"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^24.5.2",
-    "@types/pg": "^8.20.0",
-    "better-sqlite3": "^11.9.1",
-    "mitata": "^1.0.34",
-    "pg": "^8.20.0",
-    "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^3.2.4"
   }
