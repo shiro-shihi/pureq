@@ -162,29 +162,70 @@ export const { handleSignIn, handleCallback, handleSession, handleSignOut } = ki
 
 ## Providers
 
-Top-provider presets and generic OIDC helpers are available.
+@pureq/auth provides two ways to integrate OAuth/OIDC providers, balancing ease of use with strict type safety and zero-trust security.
+
+### 1. Explicit Provider Classes (Recommended)
+
+Import dedicated provider classes for perfect IntelliSense and verified profile mapping.
 
 ```ts
-import { createTopProviderPreset, listTopProviderPresets } from "@pureq/auth";
+import { PureqAuth } from "@pureq/auth";
+import { GithubProvider, GoogleProvider } from "@pureq/auth/providers";
+import { t } from "@pureq/db";
 
-const supported = listTopProviderPresets();
-const google = createTopProviderPreset("google");
+const UserSchema = t.record({
+  id: t.string(),
+  email: t.string(),
+  name: t.string(),
+  avatarUrl: t.string().optional(),
+});
+
+export const auth = new PureqAuth({
+  providers: [
+    new GithubProvider({
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
+      // Zero-trust profile mapping:
+      // The 'profile' argument is verified via OIDC backchannel exchange.
+      mapProfile: (profile) => ({
+        id: profile.id.toString(),
+        email: profile.email,
+        name: profile.name ?? profile.login,
+        avatarUrl: profile.avatar_url,
+      }),
+    }),
+  ],
+  profileSchema: UserSchema,
+});
 ```
 
-Built-in top presets include:
+### 2. Built-in Presets (Fast Onboarding)
 
-- google
-- github
-- microsoft
-- auth0
-- apple
-- okta
-- keycloak
-- cognito
-- gitlab
-- discord
-- slack
-- generic
+Use presets to quickly generate OIDC configurations with sensible default mappings.
+
+```ts
+import { createTopProviderPreset } from "@pureq/auth";
+
+const google = createTopProviderPreset("google");
+const line = createTopProviderPreset("line");
+```
+
+## Security & Zero-Trust Identity
+
+Pureq Auth implements a **Zero-Trust Identity** model for callbacks:
+
+- **Backchannel Exchange:** Unlike insecure implementations, Pureq never trusts identity claims passed directly in URL parameters (like `email` or `user_id`). It always exchanges the `code` for tokens via a secure server-to-server call.
+- **Strict Validation:** If a provider fails to return a verified email or unique identifier, the authentication flow is aborted rather than falling back to insecure defaults.
+- **Randomized Sessions:** Session tokens are 32-byte cryptographically secure random IDs, preventing session hijacking through ID guessing.
+- **Schema Enforcement:** Use `profileSchema` to ensure that mapped profiles conform to your application's requirements before they ever reach your database adapter.
+
+### Supported Standard Providers
+
+| Category | Providers |
+| --- | --- |
+| **Social** | Google, Apple, Facebook, X (Twitter), GitHub, Discord, Slack, LINE, Twitch |
+| **Enterprise** | Microsoft (Entra ID), Okta, Auth0, LinkedIn |
+| **Development** | GitLab, Amazon, Generic OIDC |
 
 ## SQL Adapters and Readiness
 

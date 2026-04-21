@@ -110,4 +110,20 @@ Response playbook:
 
 - rotate suspicious tokens/sessions by `sid` and `jti`.
 - enable stricter adapter readiness gate if deploy introduced adapter warnings.
-- trigger rollback flag if login success or refresh KPIs regress beyond threshold.
+## Zero-Trust Identity Verification
+
+`@pureq/auth` implements a strict Zero-Trust model for OAuth and OIDC callbacks.
+
+### Principles
+
+1.  **Backchannel Reliance:** We never trust identity claims (like email, name, or unique IDs) passed directly in the URL query parameters during a callback. Attackers can easily spoof these values.
+2.  **Authorization Code Exchange:** The only client-provided value we accept is the `code`. This code is immediately exchanged server-to-server for a verified `token_set`.
+3.  **Verified Source of Truth:** User profiles are constructed solely from the verified OIDC `id_token` or the secure `userinfo` endpoint.
+4.  **No Insecure Fallbacks:** If the verified identity provider fails to return a required unique identifier or email, the authentication flow is aborted with a `PUREQ_AUTH_VERIFICATION_FAILED` error.
+
+### Implementation Checklist
+
+When implementing OIDC/OAuth, ensure:
+- Your `AuthProvider` uses a secure `clientId` and `clientSecret`.
+- You leverage `mapProfile` to normalize verified claims.
+- You use `profileSchema` to enforce application-level requirements on the verified profile.

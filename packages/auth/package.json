@@ -1,7 +1,7 @@
 {
   "name": "@pureq/auth",
-  "version": "0.5.0",
-  "description": "Authentication and token management middleware for pureq",
+  "version": "1.0.0",
+  "description": "Zero-trust identity and authentication for pureq",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
