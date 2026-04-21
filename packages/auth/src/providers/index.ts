@@ -1,4 +1,43 @@
-import type { AuthProvider, AuthCredentialsProviderOptions, AuthEmailProviderOptions, AuthUser } from "../shared/index.js";
+import type { 
+  AuthProvider, 
+  AuthUser,
+  AuthCredentialsProviderOptions,
+  AuthEmailProviderOptions 
+} from "../shared/index.js";
+
+export { OAuthProvider } from "./oauth.js";
+
+export { GithubProvider } from "./github.js";
+export type { GithubProfile } from "./github.js";
+export { GoogleProvider } from "./google.js";
+export type { GoogleProfile } from "./google.js";
+export { AppleProvider } from "./apple.js";
+export type { AppleProfile } from "./apple.js";
+export { FacebookProvider } from "./facebook.js";
+export type { FacebookProfile } from "./facebook.js";
+export { MicrosoftProvider } from "./microsoft.js";
+export type { MicrosoftProfile } from "./microsoft.js";
+export { TwitterProvider } from "./twitter.js";
+export type { TwitterProfile } from "./twitter.js";
+export { DiscordProvider } from "./discord.js";
+export type { DiscordProfile } from "./discord.js";
+export { OktaProvider } from "./okta.js";
+export type { OktaProfile } from "./okta.js";
+export { Auth0Provider } from "./auth0.js";
+export type { Auth0Profile } from "./auth0.js";
+export { SlackProvider } from "./slack.js";
+export type { SlackProfile } from "./slack.js";
+export { LineProvider } from "./line.js";
+export type { LineProfile } from "./line.js";
+export { TwitchProvider } from "./twitch.js";
+export type { TwitchProfile } from "./twitch.js";
+export { LinkedinProvider } from "./linkedin.js";
+export type { LinkedinProfile } from "./linkedin.js";
+export { GitlabProvider } from "./gitlab.js";
+export type { GitlabProfile } from "./gitlab.js";
+export { AmazonProvider } from "./amazon.js";
+export type { AmazonProfile } from "./amazon.js";
+
 export { createTopProviderPreset } from "./presets.js";
 export { listTopProviderPresets } from "./presets.js";
 export type { TopProviderPreset, TopProviderPresetOptions } from "./presets.js";

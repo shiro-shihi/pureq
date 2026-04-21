@@ -72,6 +72,7 @@ export interface AuthProvider {
 	readonly id: string;
 	readonly type: "oauth" | "oidc" | "credentials" | "email";
 	readonly name: string;
+	readonly mapProfile?: (profile: any) => any | Promise<any>;
 }
 
 /** Options for credentials-based sign-in. */
@@ -79,6 +80,18 @@ export interface AuthCredentialsProviderOptions {
 	readonly id?: string;
 	readonly name?: string;
 	readonly authorize: (credentials: Readonly<Record<string, string>>) => Promise<AuthUser | null>;
+}
+
+/** Options for OAuth-based sign-in. */
+export interface AuthOAuthProviderOptions<TProfile = any, TMapped = any> {
+	readonly id?: string;
+	readonly name?: string;
+	readonly clientId: string;
+	readonly clientSecret: string;
+	readonly authorization?: string | { url: string; params?: Record<string, string> };
+	readonly token?: string | { url: string; params?: Record<string, string> };
+	readonly userinfo?: string | { url: string; params?: Record<string, string> };
+	readonly mapProfile?: (profile: TProfile) => TMapped | Promise<TMapped>;
 }
 
 /** Options for email / magic-link sign-in. */
@@ -250,6 +263,7 @@ export interface OIDCProviderDefinition {
 	readonly defaultScope?: readonly string[];
 	readonly authorizationDefaults?: Readonly<Record<string, string>>;
 	readonly validateAuthorizationOptions?: (options: OIDCAuthorizationOptions) => void;
+	readonly mapProfile?: (profile: any) => any | Promise<any>;
 }
 
 export interface OIDCCallbackParams {
@@ -703,6 +717,7 @@ export interface AuthDebugLogger {
 export interface AuthConfig {
 	readonly providers?: readonly AuthProvider[];
 	readonly adapter?: AuthDatabaseAdapter;
+	readonly profileSchema?: any; // Generic schema from @pureq/validation
 	readonly callbacks?: AuthCallbacks;
 	readonly secret?: string;
 	readonly session?: AuthSessionManagerOptions;

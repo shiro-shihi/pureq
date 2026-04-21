@@ -14,6 +14,12 @@ const TOP_PROVIDER_PRESETS = [
   "gitlab",
   "discord",
   "slack",
+  "line",
+  "twitch",
+  "linkedin",
+  "amazon",
+  "facebook",
+  "twitter",
   "generic",
 ] as const;
 
@@ -90,6 +96,30 @@ export function createTopProviderPreset(name: TopProviderPreset, options: TopPro
 
   if (name === "slack") {
     return oidcProviders.slack();
+  }
+
+  if (name === "line") {
+    return oidcProviders.line();
+  }
+
+  if (name === "twitch") {
+    return oidcProviders.twitch();
+  }
+
+  if (name === "linkedin") {
+    return oidcProviders.linkedin();
+  }
+
+  if (name === "amazon") {
+    return oidcProviders.amazon();
+  }
+
+  if (name === "facebook") {
+    return oidcProviders.facebook();
+  }
+
+  if (name === "twitter") {
+    return oidcProviders.twitter();
   }
 
   if (name === "generic") {

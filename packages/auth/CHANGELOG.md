@@ -2,6 +2,28 @@
 
 All notable changes to `@pureq/auth` are documented in this file.
 
+## [1.0.0] - 2026-04-21
+
+### Added (Zero-Trust Identity & Stable Release)
+
+- **Zero-Trust Identity Model:**
+  - Hardened OIDC/OAuth callbacks to ignore unverified URL parameters.
+  - Mandatory backchannel exchange for all identity claims.
+  - Secure state and PKCE `code_verifier` management via encrypted/secure cookies.
+- **Explicit Profile Mapping:**
+  - Introduced `mapProfile` hook in `AuthProvider` and `OIDCProviderDefinition` for pure-function data transformation.
+  - Added `profileSchema` to `AuthConfig` for optional validation of mapped profiles using `@pureq/validation` or `@pureq/db` Schema DSL.
+- **Standard Provider Library:**
+  - Added 15+ built-in provider classes with strongly typed profile interfaces in `packages/auth/src/providers/`.
+  - Supported providers: Google, Apple, Facebook, Microsoft (Entra ID), X (Twitter), GitHub, Discord, Okta, Auth0, Slack, LINE, Twitch, LinkedIn, GitLab, Amazon.
+- **Enhanced Built-in Presets:**
+  - Updated `createTopProviderPreset` with default mapping logic for all 15+ standard providers.
+  - Normalized profile data (id, email, name, image) automatically when using presets.
+- **Schema DSL Integration:**
+  - Integrated `@pureq/db`'s new `t` alias for a more ergonomic schema definition experience in auth pipelines.
+- **Stable API Baseline:**
+  - Promoted `@pureq/auth` to 1.0.0, signaling production readiness for Zero-Trust authentication.
+
 ## [0.5.0] - 2026-04-20
 
 ### Added (Fortress Hardening Suite)

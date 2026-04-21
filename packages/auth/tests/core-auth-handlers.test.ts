@@ -1,7 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/core";
 import { createInMemoryAdapter } from "../src/adapter";
 import { credentialsProvider, emailProvider } from "../src/providers";
+
+// Mock OIDC flow
+vi.mock("../src/oidc", async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    createOIDCFlowFromProvider: vi.fn((_provider, _options) => ({
+      exchangeCode: async (code: string) => {
+        const email = code === "owner-code" ? "owner@example.com" : "linked@example.com";
+        const sub = code === "owner-code" ? "new-google-acc" : "google-acc-1";
+        return {
+          accessToken: "mock-access-token",
+          idToken: `header.${btoa(JSON.stringify({ sub, email }))}.signature`,
+        };
+      },
+      getAuthorizationUrl: async () => ({ url: "http://mock-url", state: "state", codeVerifier: "verifier", nonce: "nonce" }),
+      refresh: async () => ({ accessToken: "new-access-token" }),
+    })),
+  };
+});
 
 function toCookieHeader(setCookieHeaders: readonly string[]): string {
   return setCookieHeaders.map((value) => value.split(";")[0]).join("; ");
@@ -100,11 +120,15 @@ describe("core auth handlers", () => {
     const auth = createAuth({
       adapter,
       allowDangerousAccountLinking: true,
+      providers: [
+        { id: "google", name: "Google", type: "oidc" } as any
+      ]
     });
 
+    // In a real test we'd mock the OIDC exchange, here we test the handler's secure routing
     const callback = await auth.handlers.handleCallback({
       headers: {},
-      url: "https://app.example.com/auth/callback?provider=google&type=oidc&providerAccountId=google-acc-1&email=linked@example.com",
+      url: "https://app.example.com/auth/callback?provider=google&code=valid-code&providerAccountId=google-acc-1&email=linked@example.com",
     });
 
     expect(callback.status).toBe(200);
@@ -116,10 +140,10 @@ describe("core auth handlers", () => {
     expect(linkedUser?.email).toBe("linked@example.com");
 
     const state = await auth.session.getState();
-    const sessionToken = toSessionToken(state.accessToken);
-    expect(sessionToken).toBeTruthy();
+    const accessToken = state.accessToken;
+    expect(accessToken).toHaveLength(64); // Random ID (32 bytes = 64 hex chars), not predictable
 
-    const beforeSignOut = await adapter.getSessionAndUser(sessionToken!);
+    const beforeSignOut = await adapter.getSessionAndUser(accessToken!);
     expect(beforeSignOut?.user.email).toBe("linked@example.com");
 
     const cookieHeader = toCookieHeader(auth.bridge.buildSetCookieHeaders(state));
@@ -131,7 +155,7 @@ describe("core auth handlers", () => {
 
     expect(signOut.status).toBe(200);
 
-    const afterSignOut = await adapter.getSessionAndUser(sessionToken!);
+    const afterSignOut = await adapter.getSessionAndUser(accessToken!);
     expect(afterSignOut).toBeNull();
 
     await settleBroadcastTasks();
@@ -179,11 +203,14 @@ describe("core auth handlers", () => {
 
     const auth = createAuth({
       adapter,
+      providers: [
+        { id: "google", name: "Google", type: "oidc" } as any
+      ]
     });
 
     const response = await auth.handlers.handleCallback({
       headers: {},
-      url: "https://app.example.com/auth/callback?provider=google&type=oidc&providerAccountId=new-google-acc&email=owner@example.com",
+      url: "https://app.example.com/auth/callback?provider=google&code=owner-code&providerAccountId=new-google-acc&email=owner@example.com",
     });
 
     expect(response.status).toBe(401);

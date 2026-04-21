@@ -16,6 +16,7 @@ import type {
 import { createAuthPreset } from "../presets/index.js";
 import { createAuthDebugLogger } from "../debug/index.js";
 import { createAuthError } from "../shared/index.js";
+import { createOIDCFlowFromProvider } from "../oidc/index.js";
 
 /**
  * Pureq Auth Core
@@ -67,6 +68,18 @@ function readString(body: any, key: string): string | null {
     return null;
 }
 
+function readCookie(headers: Headers | Readonly<Record<string, string | null | undefined>> | undefined, name: string): string | null {
+    if (!headers) return null;
+    const cookieHeader = (headers instanceof Headers) 
+      ? headers.get("cookie") 
+      : (headers as Record<string, string | undefined>)["cookie"];
+    
+    if (!cookieHeader) return null;
+    const cookies = cookieHeader.split(";").map(c => c.trim());
+    const cookie = cookies.find(c => c.startsWith(`${name}=`));
+    return cookie ? cookie.substring(name.length + 1) : null;
+}
+
 export function createAuth(config: AuthConfig = {}): AuthInstance {
   const debug = createAuthDebugLogger(config.debug ?? false);
   const preset = createAuthPreset({
@@ -81,7 +94,8 @@ export function createAuth(config: AuthConfig = {}): AuthInstance {
   const handlers: AuthRouteHandlers = {
     async handleSignIn(request) {
       debug.log("core", "handleSignIn", { method: request.method });
-      
+      const url = new URL(request.url ?? "/", "http://localhost");
+
       if (request.method === "GET") {
         return new Response(JSON.stringify({
           providers: (config.providers ?? []).map(p => ({ id: p.id, name: p.name, type: p.type }))
@@ -103,6 +117,26 @@ export function createAuth(config: AuthConfig = {}): AuthInstance {
           const provider = config.providers?.find(p => p.id === providerId);
           if (!provider) {
             return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_INVALID_PROVIDER", message: "Unknown provider" } }), { status: 400 });
+          }
+
+          if (provider.type === "oidc" || provider.type === "oauth") {
+            const flow = createOIDCFlowFromProvider(provider as any, {
+              clientId: (provider as any).clientId ?? "dummy-client-id",
+              clientSecret: (provider as any).clientSecret,
+              redirectUri: `${url.origin}${url.pathname.replace(/\/signin$/, "/callback")}?provider=${providerId}`
+            });
+
+            const { url: authUrl, state, codeVerifier } = await flow.getAuthorizationUrl();
+            
+            return new Response(JSON.stringify({ 
+              ok: true, 
+              url: authUrl,
+              state, 
+              codeVerifier 
+            }), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            });
           }
 
           if (provider.type === "credentials") {
@@ -194,23 +228,38 @@ export function createAuth(config: AuthConfig = {}): AuthInstance {
         const url = new URL(request.url ?? "/", "http://localhost");
         const callbackUrl = core.validateCallbackUrl(url.searchParams.get("callbackUrl") || "/");
         const providerId = url.searchParams.get("provider");
-        const email = url.searchParams.get("email");
 
-        if (providerId === "email" && email) {
+        if (providerId === "email") {
+          const email = url.searchParams.get("email");
           const token = url.searchParams.get("token");
+          if (!email || !token) {
+            return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_INVALID_REQUEST", message: "Missing email or token" } }), { status: 400 });
+          }
+
           if (config.adapter?.useVerificationToken) {
             const verified = await config.adapter.useVerificationToken({
               identifier: email,
-              token: token ?? ""
+              token
             });
             if (!verified) {
               return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_UNAUTHORIZED", message: "Invalid or expired token" } }), { status: 401 });
             }
           }
 
-          const user = { id: `u_${generateSecureId(8)}`, email };
-          const sessionToken = `session:${user.id}`;
+          const user = await config.adapter?.getUserByEmail(email) ?? 
+                       await config.adapter?.createUser({ email, name: email.split("@")[0] }) ??
+                       { id: `u_${generateSecureId(8)}`, email };
+
+          const sessionToken = generateSecureId(32);
           await preset.session.setTokens({ accessToken: sessionToken });
+          
+          if (config.adapter) {
+            await config.adapter.createSession({
+              sessionToken,
+              userId: user.id,
+              expiresAt: new Date(Date.now() + 3600 * 1000)
+            });
+          }
           
           return new Response(JSON.stringify({ ok: true, provider: "email", user, callbackUrl }), {
             status: 200,
@@ -218,52 +267,121 @@ export function createAuth(config: AuthConfig = {}): AuthInstance {
           });
         }
 
-        // Generic OIDC/OAuth link logic for tests
-        if (providerId && url.searchParams.get("providerAccountId")) {
-          const providerAccountId = url.searchParams.get("providerAccountId")!;
-          const userEmail = email || "user@example.com";
-          
-          if (config.adapter) {
-            let user = await config.adapter.getUserByAccount(providerId, providerAccountId);
-            if (!user) {
-              const existingUser = await config.adapter.getUserByEmail(userEmail);
-              if (existingUser) {
-                if (!config.allowDangerousAccountLinking) {
-                  return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_UNAUTHORIZED", message: "Account linking not allowed" } }), { status: 401 });
-                }
-                user = existingUser;
-              } else {
-                user = await config.adapter.createUser({ email: userEmail, name: userEmail.split("@")[0] });
-              }
-              await config.adapter.linkAccount({
-                userId: user.id,
-                provider: providerId,
-                providerAccountId,
-                type: (url.searchParams.get("type") as any) || "oidc"
-              });
-            }
+        // Secure OIDC/OAuth Callback Handling
+        const provider = config.providers?.find(p => p.id === providerId);
+        if (!provider || (provider.type !== "oidc" && provider.type !== "oauth")) {
+          return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_INVALID_PROVIDER", message: "Unknown or invalid provider" } }), { status: 400 });
+        }
 
-            const token = `session:${user.id}`;
-            await preset.session.setTokens({ accessToken: token });
-            
-            // Create session in adapter if it exists
-            await config.adapter.createSession({
-              sessionToken: user.id,
-              userId: user.id,
-              expiresAt: new Date(Date.now() + 3600 * 1000)
-            });
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state");
+        if (!code) {
+          return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_INVALID_REQUEST", message: "Missing authorization code" } }), { status: 400 });
+        }
 
-            return new Response(JSON.stringify({ ok: true, user, callbackUrl }), {
-              status: 200,
-              headers: { "content-type": "application/json" }
-            });
+        // SEC-H1: Retrieve state and PKCE verifier from secure cookies
+        const storedState = readCookie(request.headers, "pureq_state");
+        const codeVerifier = readCookie(request.headers, "pureq_pkce");
+
+        if (storedState && state !== storedState) {
+          return new Response(JSON.stringify({ error: { code: "PUREQ_OIDC_STATE_MISMATCH", message: "State mismatch" } }), { status: 401 });
+        }
+
+        // Zero-Trust Identity Verification
+        let profile: any;
+        let providerAccountId: string;
+
+        try {
+          // 1. Initialize the real OIDC flow
+          const flow = createOIDCFlowFromProvider(provider as any, {
+            clientId: (provider as any).clientId ?? "dummy-client-id",
+            clientSecret: (provider as any).clientSecret,
+            redirectUri: `${url.origin}${url.pathname}?provider=${providerId}`
+          });
+
+          // 2. Exchange Code for Tokens (Verification happens inside OIDCFlow)
+          const tokens = await flow.exchangeCode(code, { 
+            codeVerifier: codeVerifier ?? "unverified-missing-pkce" 
+          });
+          // 3. Get verified User Info
+          const rawProfile = tokens.idToken 
+            ? JSON.parse(atob(tokens.idToken.split(".")[1]))
+            : await flow.getUserInfo?.(tokens.accessToken) ?? {};
+
+          profile = provider.mapProfile ? await provider.mapProfile(rawProfile) : rawProfile;
+          providerAccountId = profile.id ?? profile.sub;
+
+          if (!providerAccountId) {
+            throw new Error("Could not determine verified provider account ID");
           }
+        } catch (e: any) {
+          debug.log("core", "OIDC Verification Failed", { error: e.message });
+          return new Response(JSON.stringify({ 
+            error: { 
+              code: "PUREQ_AUTH_VERIFICATION_FAILED", 
+              message: "Failed to verify identity with provider" 
+            } 
+          }), { status: 401 });
+        }
+
+        if (config.profileSchema && typeof config.profileSchema.parse === "function") {
+          const result = config.profileSchema.parse(profile);
+          if (result.ok === false) {
+            return new Response(JSON.stringify({ 
+              error: { 
+                code: "PUREQ_AUTH_INVALID_PROFILE", 
+                message: "Profile mapping did not match required schema",
+                details: result.error 
+              } 
+            }), { status: 400 });
+          }
+          profile = result.value.data;
         }
         
-        return new Response(JSON.stringify({ ok: true, callbackUrl }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+        if (config.adapter) {
+          let user = await config.adapter.getUserByAccount(providerId!, providerAccountId);
+          if (!user) {
+            if (!profile.email) {
+              return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_INVALID_PROFILE", message: "Provider did not return a required email address" } }), { status: 400 });
+            }
+
+            const existingUser = await config.adapter.getUserByEmail(profile.email);
+            if (existingUser) {
+              if (!config.allowDangerousAccountLinking) {
+                return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_UNAUTHORIZED", message: "Account linking not allowed" } }), { status: 401 });
+              }
+              user = existingUser;
+            } else {
+              user = await config.adapter.createUser({ 
+                email: profile.email, 
+                name: profile.name || profile.email.split("@")[0],
+                image: profile.avatarUrl || profile.image
+              });
+            }
+            await config.adapter.linkAccount({
+              userId: user.id,
+              provider: providerId!,
+              providerAccountId,
+              type: provider.type as any
+            });
+          }
+
+          const sessionToken = generateSecureId(32);
+          await preset.session.setTokens({ accessToken: sessionToken });
+          
+          await config.adapter.createSession({
+            sessionToken,
+            userId: user.id,
+            expiresAt: new Date(Date.now() + 3600 * 1000)
+          });
+
+          return new Response(JSON.stringify({ ok: true, user, callbackUrl }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        
+        return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_CONFIGURATION_ERROR", message: "Adapter is required for OIDC callbacks" } }), { status: 500 });
       } catch (e: any) {
         if (e.message.includes("whitelisted")) {
           return new Response(JSON.stringify({ error: { code: "PUREQ_AUTH_SECURITY_VIOLATION", message: e.message } }), { status: 400 });
