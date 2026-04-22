@@ -1,6 +1,6 @@
 {
   "name": "@pureq/db",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "True Universal, Dependency-Free Database Engine for Pureq",
   "type": "module",
   "main": "./dist/index.js",
