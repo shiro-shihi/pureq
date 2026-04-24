@@ -81,7 +81,7 @@ async function deriveKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
     {
       name: "PBKDF2",
       salt: salt.buffer as ArrayBuffer,
-      iterations: 100000,
+      iterations: 600000,
       hash: "SHA-256"
     },
     baseKey,

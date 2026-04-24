@@ -296,7 +296,7 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
       return { url: url.toString(), state, codeVerifier, nonce };
     },
 
-    async exchangeCode(code: string, requestOptions: { readonly codeVerifier: string }): Promise<TokenResponse> {
+    async exchangeCode(code: string, requestOptions: { readonly codeVerifier: string; readonly expectedNonce?: string }): Promise<TokenResponse> {
       const metadata = await getMetadata();
       const body = new URLSearchParams({
         grant_type: "authorization_code",
@@ -322,7 +322,7 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
 
       // SEC-H5: validate id_token if present
       if (tokenResponse.idToken) {
-        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, undefined);
+        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, requestOptions.expectedNonce);
       }
 
       return tokenResponse;
@@ -348,13 +348,8 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
 
       const tokenResponse = await this.exchangeCode(params.code, {
         codeVerifier: requestOptions.codeVerifier,
+        expectedNonce: requestOptions.expectedNonce,
       });
-
-      // SEC-H5 + SEC-H6: validate id_token nonce
-      if (tokenResponse.idToken && requestOptions.expectedNonce) {
-        const metadata = await getMetadata();
-        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, requestOptions.expectedNonce);
-      }
 
       return tokenResponse;
     },
