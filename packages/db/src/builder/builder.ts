@@ -383,8 +383,8 @@ export class SelectBuilder<
       const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
       
       if (!hasScope) {
-          if (policy?.redact === "hide") continue;
-          // Fall through to masking or other redaction if not hidden
+          if (!policy?.redact || policy.redact === "hide") continue;
+          // Fall through to masking or other redaction
       }
 
       if (policy?.pii && policy?.redact === "mask") {

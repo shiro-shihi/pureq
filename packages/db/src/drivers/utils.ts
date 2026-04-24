@@ -38,7 +38,7 @@ export function normalizePostgresError(e: any): Error {
     case "40P01":
       return new DBError("TRANSACTION_ROLLBACK", "The transaction was rolled back due to a conflict.", e, true);
     default:
-      return new DBError("UNKNOWN_ERROR", "An unexpected database error occurred.", e);
+      return new DBError("UNKNOWN_ERROR", e.message || "An unexpected database error occurred.", e);
   }
 }
 
@@ -46,6 +46,7 @@ export function normalizeSqliteError(e: any): Error {
   if (e instanceof DBError) return e;
 
   const msg = (e.message || "").toLowerCase();
+  const rawMessage = e.message || "An unexpected database error occurred.";
   
   if (msg.includes("unique constraint failed")) {
     return new UniqueViolationError("A record with this unique identifier already exists.", e);
@@ -63,13 +64,14 @@ export function normalizeSqliteError(e: any): Error {
     return new ConnectionError("The database connection was lost or interrupted.", e);
   }
 
-  return new DBError("UNKNOWN_ERROR", "An unexpected database error occurred.", e);
+  return new DBError("UNKNOWN_ERROR", rawMessage, e);
 }
 
 export function normalizeMysqlError(e: any): Error {
     if (e instanceof DBError) return e;
 
     const code = e.code || e.errno;
+    const rawMessage = e.message || "An unexpected database error occurred.";
     
     switch (code) {
         case 1062:
@@ -95,6 +97,6 @@ export function normalizeMysqlError(e: any): Error {
         case "ER_LOCK_WAIT_TIMEOUT":
             return new QueryTimeoutError("The database query timed out.", e);
         default:
-            return new DBError("UNKNOWN_ERROR", "An unexpected database error occurred.", e);
+            return new DBError("UNKNOWN_ERROR", rawMessage, e);
     }
 }
