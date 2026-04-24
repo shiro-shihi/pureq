@@ -74,8 +74,30 @@ export class PostgresNativeDriver implements Driver {
   }
 
   async *stream<T = unknown>(query: QueryPayload, params: unknown[] = []): AsyncIterableIterator<T> {
+    let sql: string;
+
+    if (typeof query === "string") {
+      if (this.config.zeroTrust) {
+        throw new Error("Security Exception: Zero-Trust mode is enabled. Raw SQL execution is forbidden.");
+      }
+      sql = query;
+    } else {
+      const sig = query.__pureq_signature || "";
+      let diff = sig.length ^ PUREQ_AST_SIGNATURE.length;
+      for (let i = 0; i < PUREQ_AST_SIGNATURE.length; i++) {
+        diff |= (sig.charCodeAt(i) || 0) ^ PUREQ_AST_SIGNATURE.charCodeAt(i);
+      }
+      if (this.config.zeroTrust && diff !== 0) {
+        throw new Error("Security Exception: Invalid or missing Query Builder signature.");
+      }
+      sql = query.sql;
+    }
+
+    if (params.length > 65535) {
+      throw new Error(`Security Exception: Too many query parameters (${params.length}). PostgreSQL limit is 65,535.`);
+    }
+
     const conn = await this.getConnection();
-    const sql = typeof query === "string" ? query : query.sql;
     yield* conn.streamQuery<T>(sql, params);
   }
 

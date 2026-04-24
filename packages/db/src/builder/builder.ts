@@ -9,7 +9,6 @@ import type { QueryContext } from "../types/context.js";
 import { validateIdentifier, isCircular, validateOperator, validateExpression } from "./utils.js";
 import { type QuerySpan } from "../types/diagnostics.js";
 import { op } from "./expressions.js";
-import { createLazyRowProxy } from "../drivers/native/postgres/lazy-row.js";
 import { DBError, type DBErrorCode } from "../errors/db-error.js";
 
 /**
@@ -32,6 +31,65 @@ function validateString(val: unknown, name: string): string {
         throw new Error(`Security Exception: ${name} must be a string, got ${typeof val}`);
     }
     return val;
+}
+
+/**
+ * Shared logic for applying Row-Level Security (RLS) to various statement types.
+ * 
+ * SEC-R1: Context-aware RLS with explicit table qualification and JOIN-scoping.
+ */
+function applyRLS(
+    statement: SelectStatement | UpdateStatement | DeleteStatement, 
+    table: Table<any, any>, 
+    context: QueryContext | undefined,
+    alias?: string
+): void {
+  if (!context) return;
+
+  const targetName = alias || table.name;
+  let filter: Expression | undefined;
+  
+  if (table.options.policy?.rls) {
+    filter = table.options.policy.rls(context, op);
+  } else if ((context.userId !== undefined && context.userId !== null) && table.columns["userId"]) {
+     filter = {
+       type: "binary",
+       left: { type: "column", name: "userId", table: targetName },
+       operator: "=",
+       right: { type: "literal", value: context.userId }
+     };
+  }
+
+  if (!filter) return;
+
+  // If this table is part of a JOIN, apply RLS to the JOIN ON condition instead of root WHERE
+  if (statement.type === "select" && alias && statement.joins) {
+    const join = statement.joins.find(j => j.table === table.name);
+    if (join) {
+        join.on = {
+            type: "binary",
+            left: join.on,
+            operator: "AND",
+            right: filter
+        };
+        return;
+    }
+  }
+
+  addWhereClause(statement, filter);
+}
+
+function addWhereClause(statement: SelectStatement | UpdateStatement | DeleteStatement, expr: Expression) {
+  if (statement.where) {
+    statement.where = {
+      type: "binary",
+      left: statement.where,
+      operator: "AND",
+      right: expr,
+    };
+  } else {
+    statement.where = expr;
+  }
 }
 
 export class SelectBuilder<
@@ -174,21 +232,8 @@ export class SelectBuilder<
       };
     }
 
-    this.addWhere(this.statement, expr);
+    addWhereClause(this.statement, expr);
     return this;
-  }
-
-  private addWhere(statement: SelectStatement | UpdateStatement | DeleteStatement, expr: Expression) {
-    if (statement.where) {
-      statement.where = {
-        type: "binary",
-        left: statement.where,
-        operator: "AND",
-        right: expr,
-      };
-    } else {
-      statement.where = expr;
-    }
   }
 
   orderBy(column: string, direction: "ASC" | "DESC" = "ASC"): SelectBuilder<TBase, TJoined> {
@@ -224,9 +269,6 @@ export class SelectBuilder<
     return this;
   }
 
-  /**
-   * Eagerly loads a relation defined in the table schema.
-   */
   with<K extends TBase extends Table<any, any> ? keyof (TBase["options"]["relations"] & {}) : never>(
     relationName: K
   ): SelectBuilder<TBase, TJoined & { [P in K & string]: TBase extends Table<any, any> ? (TBase["options"]["relations"] & {})[P]["target"] : never }> {
@@ -335,53 +377,90 @@ export class SelectBuilder<
     if (!this.context) return this.statement;
     const statement = { ...this.statement, joins: this.statement.joins ? [...this.statement.joins] : [] };
     const userScopes = new Set(this.context.scopes ?? []);
-    if (this.tableObj) this.applyTablePolicy(statement, this.tableObj as any, undefined, userScopes);
+    
+    // Apply RLS and Column Security for the base table
+    if (this.tableObj) {
+        applyRLS(statement, this.tableObj as any, this.context);
+        this.applyColumnSecurity(statement, this.tableObj as any, undefined, userScopes);
+    }
+    
+    // Apply RLS and Column Security for joined tables
     if (statement.joins) {
         for (const join of statement.joins) {
-            const joinedTable = Object.values(this.joinedTables).find(t => t.name === join.table);
-            if (joinedTable) this.applyTablePolicy(statement, joinedTable, join.table, userScopes);
+            const alias = Object.keys(this.joinedTables as Record<string, Table<any, any>>).find(a => (this.joinedTables as any)[a].name === join.table);
+            const joinedTable = (this.joinedTables as any)[alias!];
+            if (joinedTable) {
+                applyRLS(statement, joinedTable, this.context, alias);
+                this.applyColumnSecurity(statement, joinedTable, alias, userScopes);
+            }
         }
     }
     return statement;
   }
 
-  private applyTablePolicy(statement: SelectStatement, table: Table<any, any>, alias: string | undefined, userScopes: Set<string>): void {
+  private applyColumnSecurity(statement: SelectStatement, table: Table<any, any>, alias: string | undefined, userScopes: Set<string>): void {
     const tableName = alias || table.name;
-    if (table.options.policy?.rls && this.context) {
-      const genericFilter = table.options.policy.rls(this.context, op);
-      this.addWhere(statement, genericFilter);
-    } else if (this.context?.userId && table.columns["userId"]) {
-       const rowFilter: Expression = {
-         type: "binary",
-         left: { type: "column", name: "userId", table: tableName },
-         operator: "=",
-         right: { type: "literal", value: this.context.userId }
-       };
-       this.addWhere(statement, rowFilter);
-    }
     const allowedColumns: (string | Expression)[] = [];
-    for (const [name, col] of Object.entries(table.columns)) {
-      const options = (col as any).options;
-      const policy = options?.policy;
-      const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
-      if (!hasScope) { if (policy?.redact === "hide") continue; continue; }
-      if (policy?.pii && policy?.redact === "mask") {
-        allowedColumns.push({
-          type: "binary",
-          left: { type: "function", name: "SUBSTR", args: [{ type: "column", name, table: tableName }, { type: "literal", value: 1 }, { type: "literal", value: 3 }] },
-          operator: "||",
-          right: { type: "literal", value: "***" }
-        });
-      } else { allowedColumns.push(name); }
-    }
-    if (statement.columns === "*") { statement.columns = allowedColumns; }
-    else if (Array.isArray(statement.columns)) {
+    
+    const isColumnAllowed = (colName: string): boolean => {
+        const col = table.columns[colName];
+        if (!col) return true;
+        const options = (col as any).options;
+        const policy = options?.policy;
+        const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
+        
+        if (!hasScope) {
+            if (!policy?.redact || policy.redact === "hide") return false;
+        }
+        return true;
+    };
+
+    const getRedactedExpression = (colName: string): string | Expression => {
+        const col = table.columns[colName];
+        const options = (col as any).options;
+        const policy = options?.policy;
+
+        if (policy?.pii && policy?.redact === "mask") {
+            return {
+              type: "binary",
+              left: { 
+                type: "function", 
+                name: "SUBSTR", 
+                args: [
+                    { type: "column", name: colName, table: tableName }, 
+                    { type: "literal", value: 1 }, 
+                    { type: "literal", value: 3 }
+                ] 
+              },
+              operator: "||",
+              right: { type: "literal", value: "***" }
+            };
+        }
+        return colName;
+    };
+
+    if (statement.columns === "*") {
+        for (const colName of Object.keys(table.columns)) {
+            if (isColumnAllowed(colName)) {
+                allowedColumns.push(getRedactedExpression(colName));
+            }
+        }
+        statement.columns = allowedColumns; 
+    } else if (Array.isArray(statement.columns)) {
         const newRequested: (string | Expression)[] = [];
         for (const req of statement.columns) {
           if (typeof req === "string") {
-            const allowed = allowedColumns.find(a => (typeof a === "string" ? a === req : (a as any).left.args[0].name === req));
-            if (allowed) newRequested.push(allowed);
-          } else { newRequested.push(req); }
+            if (isColumnAllowed(req)) {
+                newRequested.push(getRedactedExpression(req));
+            }
+          } else if (req.type === "column" && (!req.table || req.table === tableName)) {
+            // SEC-H10: Enforce column security even on explicit Column Expressions
+            if (isColumnAllowed(req.name)) {
+                newRequested.push(req);
+            }
+          } else { 
+              newRequested.push(req); 
+          }
         }
         statement.columns = newRequested;
     }
@@ -390,17 +469,36 @@ export class SelectBuilder<
 
 export class InsertBuilder<TTable extends Table<any, any>> {
   private statement: InsertStatement;
+  private context?: QueryContext;
+
   constructor(private readonly db: DB, private readonly table: TTable) {
     this.statement = { type: "insert", table: table.name, values: {} };
   }
+
+  withContext(context: QueryContext): InsertBuilder<TTable> {
+    this.context = context;
+    return this;
+  }
+
   values(data: InferInsert<TTable>): InsertBuilder<TTable> {
     this.statement.values = data as Record<string, unknown>;
     return this;
   }
+
   async execute() {
+    // SEC-A1: Automatic User ID Injection with explicit null/undefined checks
+    if ((this.context?.userId !== undefined && this.context?.userId !== null) && this.table.columns["userId"]) {
+        const hasUserId = Object.prototype.hasOwnProperty.call(this.statement.values, "userId");
+        if (!hasUserId) {
+            this.statement.values["userId"] = this.context.userId;
+        } else if (this.statement.values["userId"] !== this.context.userId) {
+            throw new Error(`Security Exception: Cannot insert record for userId "${this.statement.values["userId"]}" while acting as userId "${this.context.userId}".`);
+        }
+    }
+
     const compiler = new GenericCompiler();
     const { sql, params } = compiler.compileInsert(this.statement);
-    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0, context: this.context };
     this.db.diagnostics.onQueryStart(span);
     try {
       const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
@@ -419,13 +517,22 @@ export class InsertBuilder<TTable extends Table<any, any>> {
 
 export class UpdateBuilder<TTable extends Table<any, any>> {
   private statement: UpdateStatement;
+  private context?: QueryContext;
+
   constructor(private readonly db: DB, private readonly table: TTable) {
     this.statement = { type: "update", table: table.name, values: {} };
   }
+
+  withContext(context: QueryContext): UpdateBuilder<TTable> {
+    this.context = context;
+    return this;
+  }
+
   set(data: Partial<InferSelect<TTable>>): UpdateBuilder<TTable> {
     this.statement.values = data as Record<string, unknown>;
     return this;
   }
+
   where(column: string | Expression, operator?: string, value?: unknown): UpdateBuilder<TTable> {
     let newExpr: Expression;
     if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
@@ -438,14 +545,18 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
       validateOperator(operator!);
       newExpr = { type: "binary", left: { type: "column", name: column as string }, operator: operator!, right: { type: "literal", value } };
     }
-    if (this.statement.where) this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
-    else this.statement.where = newExpr;
+    addWhereClause(this.statement, newExpr);
     return this;
   }
+
   async execute() {
+    // SEC-A2: Policy Pushdown for UPDATE
+    const pushdownStatement = { ...this.statement };
+    applyRLS(pushdownStatement, this.table as any, this.context);
+
     const compiler = new GenericCompiler();
-    const { sql, params } = compiler.compileUpdate(this.statement);
-    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
+    const { sql, params } = compiler.compileUpdate(pushdownStatement);
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: pushdownStatement, sql, params, startTime: Date.now(), duration: 0, context: this.context };
     this.db.diagnostics.onQueryStart(span);
     try {
       const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
@@ -464,9 +575,17 @@ export class UpdateBuilder<TTable extends Table<any, any>> {
 
 export class DeleteBuilder<TTable extends Table<any, any>> {
   private statement: DeleteStatement;
+  private context?: QueryContext;
+
   constructor(private readonly db: DB, private readonly table: TTable) {
     this.statement = { type: "delete", table: table.name };
   }
+
+  withContext(context: QueryContext): DeleteBuilder<TTable> {
+    this.context = context;
+    return this;
+  }
+
   where(column: string | Expression, operator?: string, value?: unknown): DeleteBuilder<TTable> {
     let newExpr: Expression;
     if (typeof column !== "string" && column && typeof column === "object" && "type" in (column as any)) {
@@ -479,14 +598,18 @@ export class DeleteBuilder<TTable extends Table<any, any>> {
       validateOperator(operator!);
       newExpr = { type: "binary", left: { type: "column", name: column as string }, operator: operator!, right: { type: "literal", value } };
     }
-    if (this.statement.where) this.statement.where = { type: "binary", left: this.statement.where, operator: "AND", right: newExpr };
-    else this.statement.where = newExpr;
+    addWhereClause(this.statement, newExpr);
     return this;
   }
+
   async execute() {
+    // SEC-A3: Policy Pushdown for DELETE
+    const pushdownStatement = { ...this.statement };
+    applyRLS(pushdownStatement, this.table as any, this.context);
+
     const compiler = new GenericCompiler();
-    const { sql, params } = compiler.compileDelete(this.statement);
-    const span: QuerySpan = { id: crypto.randomUUID(), statement: this.statement, sql, params, startTime: Date.now(), duration: 0 };
+    const { sql, params } = compiler.compileDelete(pushdownStatement);
+    const span: QuerySpan = { id: crypto.randomUUID(), statement: pushdownStatement, sql, params, startTime: Date.now(), duration: 0, context: this.context };
     this.db.diagnostics.onQueryStart(span);
     try {
       const result = await this.db.driver.execute({ sql, __pureq_signature: PUREQ_AST_SIGNATURE }, params);
