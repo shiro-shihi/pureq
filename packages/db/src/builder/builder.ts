@@ -35,24 +35,48 @@ function validateString(val: unknown, name: string): string {
 
 /**
  * Shared logic for applying Row-Level Security (RLS) to various statement types.
+ * 
+ * SEC-R1: Context-aware RLS with explicit table qualification and JOIN-scoping.
  */
-function applyRLS(statement: SelectStatement | UpdateStatement | DeleteStatement, table: Table<any, any>, context: QueryContext | undefined): void {
+function applyRLS(
+    statement: SelectStatement | UpdateStatement | DeleteStatement, 
+    table: Table<any, any>, 
+    context: QueryContext | undefined,
+    alias?: string
+): void {
   if (!context) return;
 
-  const tableName = (statement as SelectStatement).table || (statement as UpdateStatement).table;
+  const targetName = alias || table.name;
+  let filter: Expression | undefined;
   
   if (table.options.policy?.rls) {
-    const genericFilter = table.options.policy.rls(context, op);
-    addWhereClause(statement, genericFilter);
-  } else if (context.userId && table.columns["userId"]) {
-     const rowFilter: Expression = {
+    filter = table.options.policy.rls(context, op);
+  } else if ((context.userId !== undefined && context.userId !== null) && table.columns["userId"]) {
+     filter = {
        type: "binary",
-       left: { type: "column", name: "userId", table: tableName },
+       left: { type: "column", name: "userId", table: targetName },
        operator: "=",
        right: { type: "literal", value: context.userId }
      };
-     addWhereClause(statement, rowFilter);
   }
+
+  if (!filter) return;
+
+  // If this table is part of a JOIN, apply RLS to the JOIN ON condition instead of root WHERE
+  if (statement.type === "select" && alias && statement.joins) {
+    const join = statement.joins.find(j => j.table === table.name);
+    if (join) {
+        join.on = {
+            type: "binary",
+            left: join.on,
+            operator: "AND",
+            right: filter
+        };
+        return;
+    }
+  }
+
+  addWhereClause(statement, filter);
 }
 
 function addWhereClause(statement: SelectStatement | UpdateStatement | DeleteStatement, expr: Expression) {
@@ -363,10 +387,11 @@ export class SelectBuilder<
     // Apply RLS and Column Security for joined tables
     if (statement.joins) {
         for (const join of statement.joins) {
-            const joinedTable = Object.values(this.joinedTables).find(t => t.name === join.table);
+            const alias = Object.keys(this.joinedTables as Record<string, Table<any, any>>).find(a => (this.joinedTables as any)[a].name === join.table);
+            const joinedTable = (this.joinedTables as any)[alias!];
             if (joinedTable) {
-                applyRLS(statement, joinedTable, this.context);
-                this.applyColumnSecurity(statement, joinedTable, join.table, userScopes);
+                applyRLS(statement, joinedTable, this.context, alias);
+                this.applyColumnSecurity(statement, joinedTable, alias, userScopes);
             }
         }
     }
@@ -377,44 +402,62 @@ export class SelectBuilder<
     const tableName = alias || table.name;
     const allowedColumns: (string | Expression)[] = [];
     
-    for (const [name, col] of Object.entries(table.columns)) {
-      const options = (col as any).options;
-      const policy = options?.policy;
-      const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
-      
-      if (!hasScope) {
-          if (!policy?.redact || policy.redact === "hide") continue;
-          // Fall through to masking or other redaction
-      }
+    const isColumnAllowed = (colName: string): boolean => {
+        const col = table.columns[colName];
+        if (!col) return true;
+        const options = (col as any).options;
+        const policy = options?.policy;
+        const hasScope = !policy?.scope || policy.scope.length === 0 || policy.scope.some((s: string) => userScopes.has(s));
+        
+        if (!hasScope) {
+            if (!policy?.redact || policy.redact === "hide") return false;
+        }
+        return true;
+    };
 
-      if (policy?.pii && policy?.redact === "mask") {
-        allowedColumns.push({
-          type: "binary",
-          left: { 
-            type: "function", 
-            name: "SUBSTR", 
-            args: [
-                { type: "column", name, table: tableName }, 
-                { type: "literal", value: 1 }, 
-                { type: "literal", value: 3 }
-            ] 
-          },
-          operator: "||",
-          right: { type: "literal", value: "***" }
-        });
-      } else { 
-          allowedColumns.push(name); 
-      }
-    }
+    const getRedactedExpression = (colName: string): string | Expression => {
+        const col = table.columns[colName];
+        const options = (col as any).options;
+        const policy = options?.policy;
 
-    if (statement.columns === "*") { 
+        if (policy?.pii && policy?.redact === "mask") {
+            return {
+              type: "binary",
+              left: { 
+                type: "function", 
+                name: "SUBSTR", 
+                args: [
+                    { type: "column", name: colName, table: tableName }, 
+                    { type: "literal", value: 1 }, 
+                    { type: "literal", value: 3 }
+                ] 
+              },
+              operator: "||",
+              right: { type: "literal", value: "***" }
+            };
+        }
+        return colName;
+    };
+
+    if (statement.columns === "*") {
+        for (const colName of Object.keys(table.columns)) {
+            if (isColumnAllowed(colName)) {
+                allowedColumns.push(getRedactedExpression(colName));
+            }
+        }
         statement.columns = allowedColumns; 
     } else if (Array.isArray(statement.columns)) {
         const newRequested: (string | Expression)[] = [];
         for (const req of statement.columns) {
           if (typeof req === "string") {
-            const allowed = allowedColumns.find(a => (typeof a === "string" ? a === req : (a as any).left.args[0].name === req));
-            if (allowed) newRequested.push(allowed);
+            if (isColumnAllowed(req)) {
+                newRequested.push(getRedactedExpression(req));
+            }
+          } else if (req.type === "column" && (!req.table || req.table === tableName)) {
+            // SEC-H10: Enforce column security even on explicit Column Expressions
+            if (isColumnAllowed(req.name)) {
+                newRequested.push(req);
+            }
           } else { 
               newRequested.push(req); 
           }
@@ -443,11 +486,10 @@ export class InsertBuilder<TTable extends Table<any, any>> {
   }
 
   async execute() {
-    // SEC-A1: Automatic User ID Injection
-    // If a userId is in context and the table has a userId column, 
-    // ensure the inserted data belongs to the user.
-    if (this.context?.userId && this.table.columns["userId"]) {
-        if (!this.statement.values["userId"]) {
+    // SEC-A1: Automatic User ID Injection with explicit null/undefined checks
+    if ((this.context?.userId !== undefined && this.context?.userId !== null) && this.table.columns["userId"]) {
+        const hasUserId = Object.prototype.hasOwnProperty.call(this.statement.values, "userId");
+        if (!hasUserId) {
             this.statement.values["userId"] = this.context.userId;
         } else if (this.statement.values["userId"] !== this.context.userId) {
             throw new Error(`Security Exception: Cannot insert record for userId "${this.statement.values["userId"]}" while acting as userId "${this.context.userId}".`);

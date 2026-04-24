@@ -322,7 +322,14 @@ export function createOIDCFlow(options: OIDCFlowOptions): OIDCFlow {
 
       // SEC-H5: validate id_token if present
       if (tokenResponse.idToken) {
-        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, requestOptions.expectedNonce);
+        const expectedNonce = requestOptions.expectedNonce?.trim();
+        if (!expectedNonce) {
+          throw createAuthError(
+            "PUREQ_OIDC_MISSING_EXPECTED_NONCE",
+            "pureq: expectedNonce is required when validating id_token"
+          );
+        }
+        await validateIdTokenClaims(tokenResponse.idToken, metadata.issuer, options.clientId, expectedNonce);
       }
 
       return tokenResponse;
