@@ -246,7 +246,7 @@ export interface OIDCFlowOptions {
 
 export interface OIDCFlow {
 	getAuthorizationUrl(options?: OIDCAuthorizationOptions): Promise<OIDCAuthorizationResult>;
-	exchangeCode(code: string, options: { readonly codeVerifier: string }): Promise<TokenResponse>;
+	exchangeCode(code: string, options: { readonly codeVerifier: string; readonly expectedNonce?: string }): Promise<TokenResponse>;
 	exchangeCallback(
 		callback: string | URL | URLSearchParams,
 		options: { readonly expectedState?: string; readonly codeVerifier: string; readonly expectedNonce?: string }
