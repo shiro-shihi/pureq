@@ -1,6 +1,6 @@
 {
   "name": "@pureq/auth",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-trust identity and authentication for pureq",
   "type": "module",
   "main": "./dist/index.js",
